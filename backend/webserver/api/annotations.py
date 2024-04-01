@@ -1,7 +1,7 @@
-from flask_restplus import Namespace, Resource, reqparse
-from flask_login import login_required, current_user
+# from flask_restplus import Namespace, Resource, reqparse
+# from flask_login import login_required, current_user
 
-from database import AnnotationModel
+from backend.database import AnnotationModel
 from ..util import query_util
 
 import datetime

@@ -1,82 +1,86 @@
-from flask_login import login_required, current_user
-from flask_restplus import Namespace, Resource, reqparse
 from werkzeug.security import generate_password_hash
 
-from database import UserModel
+from backend.database import UserModel
+from backend.webserver.variables import responses, PageDataModel
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
 from ..util.query_util import fix_ids
 
-api = Namespace('admin', description='Admin related operations')
+# api = Namespace('admin', description='Admin related operations')
+#
+# users = reqparse.RequestParser()
+# users.add_argument('limit', type=int, default=50)
+# users.add_argument('page', type=int, default=1)
+#
+# create_user = reqparse.RequestParser()
+# create_user.add_argument('name', default="", location='json')
+# create_user.add_argument('password', default="", location='json')
+#
+# register = reqparse.RequestParser()
+# register.add_argument('username', required=True, location='json')
+# register.add_argument('password', required=True, location='json')
+# register.add_argument('email', location='json')
+# register.add_argument('name', location='json')
+# register.add_argument('isAdmin', type=bool, default=False, location='json')
 
-users = reqparse.RequestParser()
-users.add_argument('limit', type=int, default=50)
-users.add_argument('page', type=int, default=1)
-
-create_user = reqparse.RequestParser()
-create_user.add_argument('name', default="", location='json')
-create_user.add_argument('password', default="", location='json')
-
-register = reqparse.RequestParser()
-register.add_argument('username', required=True, location='json')
-register.add_argument('password', required=True, location='json')
-register.add_argument('email', location='json')
-register.add_argument('name', location='json')
-register.add_argument('isAdmin', type=bool, default=False, location='json')
-
-
-@api.route('/users')
-class Users(Resource):
-
-    @api.expect(users)
-    @login_required
-    def get(self):
-        """ Get list of all users """
-
-        if not current_user.is_admin:
-            return {"success": False, "message": "Access denied"}, 401
-
-        args = users.parse_args()
-        per_page = args['limit']
-        page = args['page']-1
-
-        user_model = UserModel.objects
-        total = user_model.count()
-        pages = int(total/per_page) + 1
-
-        user_model = user_model.skip(page*per_page).limit(per_page).exclude("preferences", "password")
-
-        return {
-            "total": total,
-            "pages": pages,
-            "page": page,
-            "per_page": per_page,
-            "users": fix_ids(user_model.all())
-        }
+router = APIRouter()
 
 
-@api.route('/user/')
-class User(Resource):
+@router.get('/admin/users', responses=responses)
+async def get_users(page_data: PageDataModel):
+    """ Get list of all users """
 
-    @login_required
-    @api.expect(register)
-    def post(self):
+    if not current_user.is_admin:
+        raise HTTPException(status_code=401, detail="Access denied")
+        # return {"success": False, "message": "Access denied"}, 401
+
+    per_page = page_data.limit
+    page = page_data.page - 1
+
+    user_model = UserModel.objects
+    total = user_model.count()
+    pages = int(total/per_page) + 1
+
+    user_model = user_model.skip(page*per_page).limit(per_page).exclude("preferences", "password")
+
+    return {
+        "total": total,
+        "pages": pages,
+        "page": page,
+        "per_page": per_page,
+        "users": fix_ids(user_model.all())
+    }
+
+
+class Register(BaseModel):
+    username: str
+    password: str
+    email: str | None = None
+    name: str | None = None
+    isAdmin: bool = False
+
+
+@router.post('/admin/user', responses=responses)
+async def create_user(user: Register):
         """ Create a new user """
 
         if not current_user.is_admin:
-            return {"success": False, "message": "Access denied"}, 401
+            raise HTTPException(status_code=401, detail="Access denied")
+            #return {"success": False, "message": "Access denied"}, 401
 
-        args = register.parse_args()
-        username = args.get('username')
+        if UserModel.objects(username__iexact=user.username).first():
+            raise HTTPException(status_code=400, detail='Username already exists.')
+            #return {'success': False, 'message': 'Username already exists.'}, 400
 
-        if UserModel.objects(username__iexact=username).first():
-            return {'success': False, 'message': 'Username already exists.'}, 400
-
-        user = UserModel()
-        user.username = args.get('username')
-        user.password = generate_password_hash(args.get('password'), method='sha256')
-        user.name = args.get('name', "")
-        user.email = args.get('email', "")
-        user.is_admin = args.get('isAdmin', False)
-        user.save()
+        usermodel = UserModel()
+        usermodel.username = user.username
+        usermodel.password = generate_password_hash(user.password, method='sha256')
+        usermodel.name = user.name
+        usermodel.email = user.email
+        usermodel.is_admin = user.isAdmin
+        usermodel.save()
 
         user_json = fix_ids(current_user)
         del user_json['password']
@@ -84,58 +88,69 @@ class User(Resource):
         return {'success': True, 'user': user_json}
 
 
-@api.route('/user/<string:username>')
-class Username(Resource):
+@router.get('/admin/user/{username}')
+async def get_user(username: str):
+    """ Get a users """
 
-    @login_required
-    def get(self, username):
-        """ Get a users """
+    if not current_user.is_admin:
+        raise HTTPException(status_code=401, detail="Access denied")
+        #return {"success": False, "message": "Access denied"}, 401
 
-        if not current_user.is_admin:
-            return {"success": False, "message": "Access denied"}, 401
+    user = UserModel.objects(username__iexact=username).first()
+    if user is None:
+        raise HTTPException(status_code=400, detail='Username already exists.')
+        #return {"success": False, "message": "User not found"}, 400
 
-        user = UserModel.objects(username__iexact=username).first()
-        if user is None:
-            return {"success": False, "message": "User not found"}, 400
+    return fix_ids(user)
 
-        return fix_ids(user)
 
-    @api.expect(create_user)
-    @login_required
-    def patch(self, username):
-        """ Edit a user """
+class UserData(BaseModel):
+    name: str = ""
+    password: str = ""
 
-        if not current_user.is_admin:
-            return {"success": False, "message": "Access denied"}, 401
 
-        user = UserModel.objects(username__iexact=username).first()
-        if user is None:
-            return {"success": False, "message": "User not found"}, 400
+#@api.expect(create_user)
+#@login_required
+@router.patch('/admin/user/{username}')
+async def update_user(username: str, user_data: UserData):
+    """ Edit a user """
 
-        args = create_user.parse_args()
-        name = args.get('name')
-        if len(name) > 0:
-            user.name = name
+    if not current_user.is_admin:
+        raise HTTPException(status_code=401, detail="Access denied")
+        #return {"success": False, "message": "Access denied"}, 401
 
-        password = args.get('password')
-        if len(password) > 0:
-            user.password = generate_password_hash(password, method='sha256')
+    user = UserModel.objects(username__iexact=username).first()
+    if user is None:
+        raise HTTPException(status_code=400, detail='User not found')
+        #return {"success": False, "message": "User not found"}, 400
 
-        user.save()
+    args = create_user.parse_args()
+    name = user_data.name
+    if len(name) > 0:
+        user.name = name
 
-        return fix_ids(user)
+    password = user_data.password
+    if len(password) > 0:
+        user.password = generate_password_hash(password, method='sha256')
 
-    @login_required
-    def delete(self, username):
-        """ Delete a user """
+    user.save()
 
-        if not current_user.is_admin:
-            return {"success": False, "message": "Access denied"}, 401
+    return fix_ids(user)
 
-        user = UserModel.objects(username__iexact=username).first()
-        if user is None:
-            return {"success": False, "message": "User not found"}, 400
 
-        user.delete()
-        return {"success": True}
+#@login_required
+@router.delete('/admin/user/{username}')
+async def delete_user(username: str):
+    """ Delete a user """
 
+    if not current_user.is_admin:
+        raise HTTPException(status_code=401, detail="Access denied")
+        #return {"success": False, "message": "Access denied"}, 401
+
+    user = UserModel.objects(username__iexact=username).first()
+    if user is None:
+        raise HTTPException(status_code=400, detail='User not found')
+        #return {"success": False, "message": "User not found"}, 400
+
+    user.delete()
+    return {"success": True}

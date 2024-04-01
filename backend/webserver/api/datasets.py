@@ -1,17 +1,17 @@
-from flask import request
-from flask_restplus import Namespace, Resource, reqparse, inputs
-from flask_login import login_required, current_user
+#from flask import request
+#from flask_restplus import Namespace, Resource, reqparse, inputs
+#from flask_login import login_required, current_user
 from werkzeug.datastructures import FileStorage
 from mongoengine.errors import NotUniqueError
 from mongoengine.queryset.visitor import Q
-from threading import Thread
+# from threading import Thread
 
-from google_images_download import google_images_download as gid
+# from google_images_download import google_images_download as gid
 
 from ..util.pagination_util import Pagination
 from ..util import query_util, coco_util, profile
 
-from database import (
+from backend.database import (
     ImageModel,
     DatasetModel,
     CategoryModel,
@@ -23,275 +23,269 @@ import datetime
 import json
 import os
 
-api = Namespace('dataset', description='Dataset related operations')
+from backend.webserver.variables import responses, PageDataModel
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+# api = Namespace('dataset', description='Dataset related operations')
+#
+#
+# dataset_create = reqparse.RequestParser()
+# dataset_create.add_argument('name', required=True)
+# dataset_create.add_argument('categories', type=list, required=False, location='json',
+#                             help="List of default categories for sub images")
+#
+# page_data = reqparse.RequestParser()
+# page_data.add_argument('page', default=1, type=int)
+# page_data.add_argument('limit', default=20, type=int)
+# page_data.add_argument('folder', default='', help='Folder for data')
+# page_data.add_argument('order', default='file_name', help='Order to display images')
+#
+# delete_data = reqparse.RequestParser()
+# delete_data.add_argument('fully', default=False, type=bool,
+#                          help="Fully delete dataset (no undo)")
+#
+# coco_upload = reqparse.RequestParser()
+# coco_upload.add_argument('coco', location='files', type=FileStorage, required=True, help='Json coco')
+#
+# export = reqparse.RequestParser()
+# export.add_argument('categories', type=str, default=None, required=False, help='Ids of categories to export')
+# export.add_argument('with_empty_images', type=inputs.boolean, default=False, required=False, help='Export with un-annotated images')
+#
+# update_dataset = reqparse.RequestParser()
+# update_dataset.add_argument('categories', location='json', type=list, help="New list of categories")
+# update_dataset.add_argument('default_annotation_metadata', location='json', type=dict,
+#                             help="Default annotation metadata")
+#
+# dataset_generate = reqparse.RequestParser()
+# dataset_generate.add_argument('keywords', location='json', type=list, default=[],
+#                               help="Keywords associated with images")
+# dataset_generate.add_argument('limit', location='json', type=int, default=100, help="Number of images per keyword")
+#
+# share = reqparse.RequestParser()
+# share.add_argument('users', location='json', type=list, default=[], help="List of users")
+
+router = APIRouter()
+
+# @api.route('/dataset')
+# @login_required
+@router.route('/dataset', responses=responses)
+async def get_datasets(self):
+    """ Returns all datasets """
+    return query_util.fix_ids(current_user.datasets.filter(deleted=False).all())
 
 
-dataset_create = reqparse.RequestParser()
-dataset_create.add_argument('name', required=True)
-dataset_create.add_argument('categories', type=list, required=False, location='json',
-                            help="List of default categories for sub images")
+class CreateDatasetModel(BaseModel):
+    name: str
+    categories: list | None = None
 
-page_data = reqparse.RequestParser()
-page_data.add_argument('page', default=1, type=int)
-page_data.add_argument('limit', default=20, type=int)
-page_data.add_argument('folder', default='', help='Folder for data')
-page_data.add_argument('order', default='file_name', help='Order to display images')
+#@api.expect(dataset_create)
+#@login_required
+@router.post('/dataset', responses=responses)
+async def create_dataset(dataset_create: CreateDatasetModel):
+    """ Creates a dataset """
+    name = dataset_create.name
+    categories = dataset_create.categories
 
-delete_data = reqparse.RequestParser()
-delete_data.add_argument('fully', default=False, type=bool,
-                         help="Fully delete dataset (no undo)")
+    category_ids = CategoryModel.bulk_create(categories)
 
-coco_upload = reqparse.RequestParser()
-coco_upload.add_argument('coco', location='files', type=FileStorage, required=True, help='Json coco')
+    try:
+        dataset = DatasetModel(name=name, categories=category_ids)
+        dataset.save()
+    except NotUniqueError:
+        return {'message': 'Dataset already exists. Check the undo tab to fully delete the dataset.'}, 400
 
-export = reqparse.RequestParser()
-export.add_argument('categories', type=str, default=None, required=False, help='Ids of categories to export')
-export.add_argument('with_empty_images', type=inputs.boolean, default=False, required=False, help='Export with un-annotated images')
-
-update_dataset = reqparse.RequestParser()
-update_dataset.add_argument('categories', location='json', type=list, help="New list of categories")
-update_dataset.add_argument('default_annotation_metadata', location='json', type=dict,
-                            help="Default annotation metadata")                            
-
-dataset_generate = reqparse.RequestParser()
-dataset_generate.add_argument('keywords', location='json', type=list, default=[],
-                              help="Keywords associated with images")
-dataset_generate.add_argument('limit', location='json', type=int, default=100, help="Number of images per keyword")
-
-share = reqparse.RequestParser()
-share.add_argument('users', location='json', type=list, default=[], help="List of users")
+    return query_util.fix_ids(dataset)
 
 
-@api.route('/')
-class Dataset(Resource):
-    @login_required
-    def get(self):
-        """ Returns all datasets """
-        return query_util.fix_ids(current_user.datasets.filter(deleted=False).all())
+# def download_images(output_dir, args):
+#     for keyword in args['keywords']:
+#         response = gid.googleimagesdownload()
+#         response.download({
+#             "keywords": keyword,
+#             "limit": args['limit'],
+#             "output_directory": output_dir,
+#             "no_numbering": True,
+#             "format": "jpg",
+#             "type": "photo",
+#             "print_urls": False,
+#             "print_paths": False,
+#             "print_size": False
+#         })
+#
+#
+# @api.route('/<int:dataset_id>/generate')
+# class DatasetGenerate(Resource):
+#     @api.expect(dataset_generate)
+#     @login_required
+#     def post(self, dataset_id):
+#         """ Adds images found on google to the dataset """
+#         args = dataset_generate.parse_args()
+#
+#         dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
+#         if dataset is None:
+#             return {"message": "Invalid dataset id"}, 400
+#
+#         if not dataset.is_owner(current_user):
+#             return {"message": "You do not have permission to download the dataset's annotations"}, 403
+#
+#         thread = Thread(target=download_images, args=(dataset.directory, args))
+#         thread.start()
+#
+#         return {"success": True}
 
-    @api.expect(dataset_create)
-    @login_required
-    def post(self):
-        """ Creates a dataset """
-        args = dataset_create.parse_args()
-        name = args['name']
-        categories = args.get('categories', [])
+# @login_required
+@router.get('/dataset/{dataset_id}/users', responses=responses)
+async def get_dataset(dataset_id: int):
+    """ All users in the dataset """
+    dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
+    if dataset is None:
+        return {"message": "Invalid dataset id"}, 400
 
-        category_ids = CategoryModel.bulk_create(categories)
-
-        try:
-            dataset = DatasetModel(name=name, categories=category_ids)
-            dataset.save()
-        except NotUniqueError:
-            return {'message': 'Dataset already exists. Check the undo tab to fully delete the dataset.'}, 400
-
-        return query_util.fix_ids(dataset)
-
-
-def download_images(output_dir, args):
-    for keyword in args['keywords']:
-        response = gid.googleimagesdownload()
-        response.download({
-            "keywords": keyword,
-            "limit": args['limit'],
-            "output_directory": output_dir,
-            "no_numbering": True,
-            "format": "jpg",
-            "type": "photo",
-            "print_urls": False,
-            "print_paths": False,
-            "print_size": False
-        })
-
-
-@api.route('/<int:dataset_id>/generate')
-class DatasetGenerate(Resource):
-    @api.expect(dataset_generate)
-    @login_required
-    def post(self, dataset_id):
-        """ Adds images found on google to the dataset """
-        args = dataset_generate.parse_args()
-
-        dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
-        if dataset is None:
-            return {"message": "Invalid dataset id"}, 400
-
-        if not dataset.is_owner(current_user):
-            return {"message": "You do not have permission to download the dataset's annotations"}, 403
-
-        thread = Thread(target=download_images, args=(dataset.directory, args))
-        thread.start()
-
-        return {"success": True}
+    users = dataset.get_users()
+    return query_util.fix_ids(users)
 
 
-@api.route('/<int:dataset_id>/users')
-class DatasetMembers(Resource):
+#    @login_required
+@router.get('/dataset/<int:dataset_id>/reset/metadata')
+async def get_dataset_metadata(dataset_id: int):
+    """ All users in the dataset """
+    dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
+    if dataset is None:
+        return {"message": "Invalid dataset id"}, 400
 
-    @login_required
-    def get(self, dataset_id):
-        """ All users in the dataset """
-        args = dataset_generate.parse_args()
+    AnnotationModel.objects(dataset_id=dataset.id).update(metadata=dataset.default_annotation_metadata)
+    ImageModel.objects(dataset_id=dataset.id).update(metadata={})
 
-        dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
-        if dataset is None:
-            return {"message": "Invalid dataset id"}, 400
-
-        users = dataset.get_users()
-        return query_util.fix_ids(users)
+    return {'success': True}
 
 
-@api.route('/<int:dataset_id>/reset/metadata')
-class DatasetCleanMeta(Resource):
+# @login_required
+@router.get('/dataset/{dataset_id}/stats', responses=responses)
+async def get(dataset_id: int):
+    """ All users in the dataset """
 
-    @login_required
-    def get(self, dataset_id):
-        """ All users in the dataset """
-        args = dataset_generate.parse_args()
+    dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
+    if dataset is None:
+        return {"message": "Invalid dataset id"}, 400
 
-        dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
-        if dataset is None:
-            return {"message": "Invalid dataset id"}, 400
+    images = ImageModel.objects(dataset_id=dataset.id, deleted=False)
+    annotated_images = images.filter(annotated=True)
+    annotations = AnnotationModel.objects(dataset_id=dataset_id, deleted=False)
 
-        AnnotationModel.objects(dataset_id=dataset.id)\
-            .update(metadata=dataset.default_annotation_metadata)
-        ImageModel.objects(dataset_id=dataset.id)\
-            .update(metadata={})
+    # Calculate annotation counts by category in this dataset
+    category_count = dict()
+    image_category_count = dict()
 
-        return {'success': True}
+    user_stats = dict()
 
+    for user in dataset.get_users():
+        user_annots = AnnotationModel.objects(dataset_id=dataset_id, deleted=False, creator=user.username)
+        image_count = dict()
+        for annot in user_annots:
+            image_count[annot.image_id] = image_count.get(annot.image_id, 0) + 1
 
-@api.route('/<int:dataset_id>/stats')
-class DatasetStats(Resource):
-
-    @login_required
-    def get(self, dataset_id):
-        """ All users in the dataset """
-        args = dataset_generate.parse_args()
-
-        dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
-        if dataset is None:
-            return {"message": "Invalid dataset id"}, 400
-
-        images = ImageModel.objects(dataset_id=dataset.id, deleted=False)
-        annotated_images = images.filter(annotated=True)
-        annotations = AnnotationModel.objects(dataset_id=dataset_id, deleted=False)
-
-        # Calculate annotation counts by category in this dataset
-        category_count = dict()
-        image_category_count = dict()
-
-
-
-        user_stats = dict()
-
-        for user in dataset.get_users():
-            user_annots = AnnotationModel.objects(dataset_id=dataset_id, deleted=False, creator=user.username)
-            image_count = dict()
-            for annot in user_annots:
-                image_count[annot.image_id] = image_count.get(annot.image_id, 0) + 1
-
-            user_stats[user.username] = {
-                "annotations":  len(user_annots),
-                "images": len(image_count)
-            }
-
-
-        for category in dataset.categories:
-
-            # Calculate the annotation count in the current category in this dataset
-            cat_name = CategoryModel.objects(id=category).first()['name']
-            cat_count = AnnotationModel.objects(dataset_id=dataset_id, category_id=category, deleted=False).count()
-            category_count.update({str(cat_name): cat_count})
-
-            # Calculate the annotated images count in the current category in this dataset
-            image_count = len(AnnotationModel.objects(dataset_id=dataset_id, category_id=category, deleted=False).distinct('image_id'))
-            image_category_count.update({str(cat_name): image_count})
-
-        stats = {
-            'total': {
-                'Users': dataset.get_users().count(),
-                'Images': images.count(),
-                'Annotated Images': annotated_images.count(),
-                'Annotations': annotations.count(),
-                'Categories': len(dataset.categories),
-                'Time Annotating (s)': (images.sum('milliseconds') or 0) / 1000
-            },
-            'average': {
-                'Image Size (px)': images.average('width'),
-                'Image Height (px)': images.average('height'),
-                'Annotation Area (px)': annotations.average('area'),
-                'Time (ms) per Image': images.average('milliseconds') or 0,
-                'Time (ms) per Annotation': annotations.average('milliseconds') or 0
-            },
-            'categories': category_count,
-            'images_per_category': image_category_count,
-            'users': user_stats
+        user_stats[user.username] = {
+            "annotations":  len(user_annots),
+            "images": len(image_count)
         }
-        return stats
 
 
-@api.route('/<int:dataset_id>')
-class DatasetId(Resource):
+    for category in dataset.categories:
 
-    @login_required
-    def delete(self, dataset_id):
-        """ Deletes dataset by ID (only owners)"""
+        # Calculate the annotation count in the current category in this dataset
+        cat_name = CategoryModel.objects(id=category).first()['name']
+        cat_count = AnnotationModel.objects(dataset_id=dataset_id, category_id=category, deleted=False).count()
+        category_count.update({str(cat_name): cat_count})
 
-        dataset = DatasetModel.objects(id=dataset_id, deleted=False).first()
+        # Calculate the annotated images count in the current category in this dataset
+        image_count = len(AnnotationModel.objects(dataset_id=dataset_id, category_id=category, deleted=False).distinct('image_id'))
+        image_category_count.update({str(cat_name): image_count})
 
-        if dataset is None:
-            return {"message": "Invalid dataset id"}, 400
-        
-        if not current_user.can_delete(dataset):
-            return {"message": "You do not have permission to delete the dataset"}, 403
+    stats = {
+        'total': {
+            'Users': dataset.get_users().count(),
+            'Images': images.count(),
+            'Annotated Images': annotated_images.count(),
+            'Annotations': annotations.count(),
+            'Categories': len(dataset.categories),
+            'Time Annotating (s)': (images.sum('milliseconds') or 0) / 1000
+        },
+        'average': {
+            'Image Size (px)': images.average('width'),
+            'Image Height (px)': images.average('height'),
+            'Annotation Area (px)': annotations.average('area'),
+            'Time (ms) per Image': images.average('milliseconds') or 0,
+            'Time (ms) per Annotation': annotations.average('milliseconds') or 0
+        },
+        'categories': category_count,
+        'images_per_category': image_category_count,
+        'users': user_stats
+    }
+    return stats
 
-        dataset.update(set__deleted=True, set__deleted_date=datetime.datetime.now())
-        return {"success": True}
 
-    @api.expect(update_dataset)
-    def post(self, dataset_id):
+#@login_required
+@router.delete('/dataset/{dataset_id}')
+async def delete(dataset_id: int):
+    """ Deletes dataset by ID (only owners)"""
 
-        """ Updates dataset by ID """
+    dataset = DatasetModel.objects(id=dataset_id, deleted=False).first()
 
-        dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
-        if dataset is None:
-            return {"message": "Invalid dataset id"}, 400
+    if dataset is None:
+        return {"message": "Invalid dataset id"}, 400
 
-        args = update_dataset.parse_args()
-        categories = args.get('categories')
-        default_annotation_metadata = args.get('default_annotation_metadata')
-        set_default_annotation_metadata = args.get('set_default_annotation_metadata')
+    if not current_user.can_delete(dataset):
+        return {"message": "You do not have permission to delete the dataset"}, 403
 
-        if categories is not None:
-            dataset.categories = CategoryModel.bulk_create(categories)
+    dataset.update(set__deleted=True, set__deleted_date=datetime.datetime.now())
+    return {"success": True}
 
-        if default_annotation_metadata is not None:
+#@login_required
+@api.expect(update_dataset)
+async def post(self, dataset_id):
 
-            update = {}
-            for key, value in default_annotation_metadata.items():
-                if key not in dataset.default_annotation_metadata:
-                    update[f'set__metadata__{key}'] = value
+    """ Updates dataset by ID """
 
-            dataset.default_annotation_metadata = default_annotation_metadata
-            
-            if len(update.keys()) > 0:
-                AnnotationModel.objects(dataset_id=dataset.id, deleted=False)\
-                    .update(**update)
+    dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
+    if dataset is None:
+        return {"message": "Invalid dataset id"}, 400
 
-        dataset.update(
-            categories=dataset.categories,
-            default_annotation_metadata=dataset.default_annotation_metadata
-        )
+    args = update_dataset.parse_args()
+    categories = args.get('categories')
+    default_annotation_metadata = args.get('default_annotation_metadata')
+    set_default_annotation_metadata = args.get('set_default_annotation_metadata')
 
-        return {"success": True}
+    if categories is not None:
+        dataset.categories = CategoryModel.bulk_create(categories)
+
+    if default_annotation_metadata is not None:
+
+        update = {}
+        for key, value in default_annotation_metadata.items():
+            if key not in dataset.default_annotation_metadata:
+                update[f'set__metadata__{key}'] = value
+
+        dataset.default_annotation_metadata = default_annotation_metadata
+
+        if len(update.keys()) > 0:
+            AnnotationModel.objects(dataset_id=dataset.id, deleted=False)\
+                .update(**update)
+
+    dataset.update(
+        categories=dataset.categories,
+        default_annotation_metadata=dataset.default_annotation_metadata
+    )
+
+    return {"success": True}
 
 
 @api.route('/<int:dataset_id>/share')
 class DatasetIdShare(Resource):
     @api.expect(share)
     @login_required
-    def post(self, dataset_id):
+    async def post(self, dataset_id):
         args = share.parse_args()
 
         dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
@@ -310,7 +304,7 @@ class DatasetIdShare(Resource):
 class DatasetData(Resource):
     @api.expect(page_data)
     @login_required
-    def get(self):
+    async def get(self):
         """ Endpoint called by dataset viewer client """
 
         args = page_data.parse_args()
@@ -349,7 +343,7 @@ class DatasetDataId(Resource):
     @profile
     @api.expect(page_data)
     @login_required
-    def get(self, dataset_id):
+    async def get(self, dataset_id):
         """ Endpoint called by image viewer client """
 
         parsed_args = page_data.parse_args()
@@ -482,7 +476,7 @@ class DatasetDataId(Resource):
 class DatasetExports(Resource):
 
     @login_required
-    def get(self, dataset_id):
+    async def get(self, dataset_id):
         """ Returns exports of images and annotations in the dataset (only owners) """
         dataset = current_user.datasets.filter(id=dataset_id).first()
 
@@ -512,7 +506,7 @@ class DatasetExport(Resource):
 
     @api.expect(export)
     @login_required
-    def get(self, dataset_id):
+    async def get(self, dataset_id):
 
         args = export.parse_args()
         categories = args.get('categories')
@@ -533,7 +527,7 @@ class DatasetExport(Resource):
     
     @api.expect(coco_upload)
     @login_required
-    def post(self, dataset_id):
+    async def post(self, dataset_id):
         """ Adds coco formatted annotations to the dataset """
         args = coco_upload.parse_args()
         coco = args['coco']
@@ -549,7 +543,7 @@ class DatasetExport(Resource):
 class DatasetCoco(Resource):
 
     @login_required
-    def get(self, dataset_id):
+    async def get(self, dataset_id):
         """ Returns coco of images and annotations in the dataset (only owners) """
         dataset = current_user.datasets.filter(id=dataset_id).first()
 
@@ -563,7 +557,7 @@ class DatasetCoco(Resource):
 
     @api.expect(coco_upload)
     @login_required
-    def post(self, dataset_id):
+    async def post(self, dataset_id):
         """ Adds coco formatted annotations to the dataset """
         args = coco_upload.parse_args()
         coco = args['coco']
@@ -579,7 +573,7 @@ class DatasetCoco(Resource):
 class DatasetCocoId(Resource):
 
     @login_required
-    def get(self, import_id):
+    async def get(self, import_id):
         """ Returns current progress and errors of a coco import """
         coco_import = CocoImportModel.objects(
             id=import_id, creator=current_user.username).first()
@@ -597,7 +591,7 @@ class DatasetCocoId(Resource):
 class DatasetScan(Resource):
     
     @login_required
-    def get(self, dataset_id):
+    async def get(self, dataset_id):
 
         dataset = DatasetModel.objects(id=dataset_id).first()
         

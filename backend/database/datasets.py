@@ -1,7 +1,7 @@
 
 from flask_login import current_user
 from mongoengine import *
-from config import Config
+import backend.config as Config
 
 from .tasks import TaskModel
 
@@ -47,7 +47,7 @@ class DatasetModel(DynamicDocument):
 
     def import_coco(self, coco_json):
 
-        from workers.tasks import import_annotations
+        from backend.workers.tasks import import_annotations
 
         task = TaskModel(
             name="Import COCO format into {}".format(self.name),

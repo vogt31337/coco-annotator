@@ -1,5 +1,5 @@
 from mongoengine import connect
-from config import Config
+import backend.config as Config
 
 from .annotations import *
 from .categories import *

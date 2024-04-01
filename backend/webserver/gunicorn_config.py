@@ -1,5 +1,5 @@
 
-from config import Config
+import backend.config as Config
 
 
 bind = '0.0.0.0:5000'

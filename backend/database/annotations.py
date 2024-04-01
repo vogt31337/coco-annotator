@@ -1,3 +1,4 @@
+import numpy as np
 import imantics as im
 import json
 

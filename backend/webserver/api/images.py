@@ -35,6 +35,7 @@ image_upload.add_argument('dataset_id', required=True, type=int,
 image_download = reqparse.RequestParser()
 image_download.add_argument('asAttachment', type=bool, default=False)
 image_download.add_argument('thumbnail', type=bool, default=False)
+image_download.add_argument('asOriginal', type=bool, default=False)
 image_download.add_argument('width', type=int)
 image_download.add_argument('height', type=int)
 
@@ -113,6 +114,7 @@ class ImageId(Resource):
         args = image_download.parse_args()
         as_attachment = args.get('asAttachment')
         thumbnail = args.get('thumbnail')
+        as_original = args.get('asOriginal')
 
         image = current_user.images.filter(id=image_id, deleted=False).first()
 
@@ -126,7 +128,13 @@ class ImageId(Resource):
             width = image.width
         if not height:
             height = image.height
-        
+
+        if as_original:
+            with open(image.path, mode='rb') as f:
+                image_io = io.BytesIO(f.read())
+                image_io.seek(0)
+            return send_file(image_io, download_name=image.file_name, as_attachment=as_attachment)
+
         pil_image = image.open_thumbnail() if thumbnail else Image.open(image.path)
 
         pil_image.thumbnail((width, height), Image.ANTIALIAS)
@@ -135,7 +143,7 @@ class ImageId(Resource):
         pil_image.save(image_io, "JPEG", quality=90)
         image_io.seek(0)
 
-        return send_file(image_io, attachment_filename=image.file_name, as_attachment=as_attachment)
+        return send_file(image_io, download_name=image.file_name, as_attachment=as_attachment)
 
     @login_required
     def delete(self, image_id):

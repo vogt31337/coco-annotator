@@ -1,8 +1,8 @@
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from config import Config
-from database import ImageModel
+import backend.config as Config
+from backend.database import ImageModel
 from .util.thumbnails import generate_thumbnail
 
 import re

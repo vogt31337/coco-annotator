@@ -1,7 +1,7 @@
 import datetime
 
 from mongoengine import *
-from flask_login import UserMixin
+# from flask_login import UserMixin
 
 from .annotations import AnnotationModel
 from .categories import CategoryModel
@@ -9,7 +9,8 @@ from .datasets import DatasetModel
 from .images import ImageModel
 
 
-class UserModel(DynamicDocument, UserMixin):
+#class UserModel(DynamicDocument, UserMixin):
+class UserModel(DynamicDocument):
 
     password = StringField(required=True)
     username = StringField(max_length=25, required=True, unique=True)
