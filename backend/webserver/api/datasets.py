@@ -70,8 +70,8 @@ router = APIRouter()
 
 # @api.route('/dataset')
 # @login_required
-@router.route('/dataset', responses=responses)
-async def get_datasets(self):
+@router.get('/dataset', responses=responses)
+async def get_datasets():
     """ Returns all datasets """
     return query_util.fix_ids(current_user.datasets.filter(deleted=False).all())
 
@@ -137,7 +137,7 @@ async def create_dataset(dataset_create: CreateDatasetModel):
 
 # @login_required
 @router.get('/dataset/{dataset_id}/users', responses=responses)
-async def get_dataset(dataset_id: int):
+async def get_dataset_users(dataset_id: int):
     """ All users in the dataset """
     dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
     if dataset is None:
@@ -148,7 +148,7 @@ async def get_dataset(dataset_id: int):
 
 
 #    @login_required
-@router.get('/dataset/<int:dataset_id>/reset/metadata')
+@router.get('/dataset/<int:dataset_id>/reset/metadata', responses=responses)
 async def get_dataset_metadata(dataset_id: int):
     """ All users in the dataset """
     dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
@@ -163,7 +163,7 @@ async def get_dataset_metadata(dataset_id: int):
 
 # @login_required
 @router.get('/dataset/{dataset_id}/stats', responses=responses)
-async def get(dataset_id: int):
+async def get_dataset_stats(dataset_id: int):
     """ All users in the dataset """
 
     dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
@@ -227,8 +227,8 @@ async def get(dataset_id: int):
 
 
 #@login_required
-@router.delete('/dataset/{dataset_id}')
-async def delete(dataset_id: int):
+@router.delete('/dataset/{dataset_id}', responses=responses)
+async def delete_dataset(dataset_id: int):
     """ Deletes dataset by ID (only owners)"""
 
     dataset = DatasetModel.objects(id=dataset_id, deleted=False).first()
@@ -242,10 +242,11 @@ async def delete(dataset_id: int):
     dataset.update(set__deleted=True, set__deleted_date=datetime.datetime.now())
     return {"success": True}
 
-#@login_required
-@api.expect(update_dataset)
-async def post(self, dataset_id):
 
+#@login_required
+#@api.expect(update_dataset)
+@router.post('/dataset/{dataset_id}', responses=responses)
+async def update_dataset(dataset_id: int):
     """ Updates dataset by ID """
 
     dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
@@ -281,262 +282,261 @@ async def post(self, dataset_id):
     return {"success": True}
 
 
-@api.route('/<int:dataset_id>/share')
-class DatasetIdShare(Resource):
-    @api.expect(share)
-    @login_required
-    async def post(self, dataset_id):
-        args = share.parse_args()
+#@api.expect(share)
+#@login_required
+#@api.route('/<int:dataset_id>/share')
+@router.post('/dataset/{dataset_id}/share', responses=responses)
+async def share_dataset(dataset_id):
+    args = share.parse_args()
 
-        dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
-        if dataset is None:
-            return {"message": "Invalid dataset id"}, 400
+    dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
+    if dataset is None:
+        return {"message": "Invalid dataset id"}, 400
 
-        if not dataset.is_owner(current_user):
-            return {"message": "You do not have permission to share this dataset"}, 403
+    if not dataset.is_owner(current_user):
+        return {"message": "You do not have permission to share this dataset"}, 403
 
-        dataset.update(users=args.get('users'))
+    dataset.update(users=args.get('users'))
 
-        return {"success": True}
-
-
-@api.route('/data')
-class DatasetData(Resource):
-    @api.expect(page_data)
-    @login_required
-    async def get(self):
-        """ Endpoint called by dataset viewer client """
-
-        args = page_data.parse_args()
-        limit = args['limit']
-        page = args['page']
-        folder = args['folder']
-
-        datasets = current_user.datasets.filter(deleted=False)
-        pagination = Pagination(datasets.count(), limit, page)
-        datasets = datasets[pagination.start:pagination.end]
-
-        datasets_json = []
-        for dataset in datasets:
-            dataset_json = query_util.fix_ids(dataset)
-            images = ImageModel.objects(dataset_id=dataset.id, deleted=False)
-
-            dataset_json['numberImages'] = images.count()
-            dataset_json['numberAnnotated'] = images.filter(annotated=True).count()
-            dataset_json['permissions'] = dataset.permissions(current_user)
-            
-            first = images.first()
-            if first is not None:
-                dataset_json['first_image_id'] = images.first().id
-            datasets_json.append(dataset_json)
-
-        return {
-            "pagination": pagination.export(),
-            "folder": folder,
-            "datasets": datasets_json,
-            "categories": query_util.fix_ids(current_user.categories.filter(deleted=False).all())
-        }
-
-@api.route('/<int:dataset_id>/data')
-class DatasetDataId(Resource):
-
-    @profile
-    @api.expect(page_data)
-    @login_required
-    async def get(self, dataset_id):
-        """ Endpoint called by image viewer client """
-
-        parsed_args = page_data.parse_args()
-        per_page = parsed_args.get('limit')
-        page = parsed_args.get('page') - 1
-        folder = parsed_args.get('folder')
-        order = parsed_args.get('order')
-
-        args = dict(request.args)
-
-        # Check if dataset exists
-        dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
-        if dataset is None:
-            return {'message', 'Invalid dataset id'}, 400
-                
-        # Make sure folder starts with is in proper format
-        if len(folder) > 0:
-            folder = folder[0].strip('/') + folder[1:]
-            if folder[-1] != '/':
-                folder = folder + '/'
-
-        # Get directory
-        directory = os.path.join(dataset.directory, folder)
-        if not os.path.exists(directory):
-            return {'message': 'Directory does not exist.'}, 400
-
-        # Remove parsed arguments
-        for key in parsed_args:
-            args.pop(key, None)
-        
-        # Generate query from remaining arugments
-        query = {}
-        for key, value in args.items():
-            lower = value.lower()
-            if lower in ["true", "false"]:
-                value = json.loads(lower)
-            
-            if len(lower) != 0:
-                query[key] = value
-
-        # Change category_ids__in to list
-        if 'category_ids__in' in query.keys():
-            query['category_ids__in'] = [int(x) for x in query['category_ids__in'].split(',')]
-
-        # Initialize mongo query with required elements:
-        query_build = Q(dataset_id=dataset_id)
-        query_build &= Q(path__startswith=directory)
-        query_build &= Q(deleted=False)
-
-        # Define query names that should use complex logic:
-        complex_query = ['annotated', 'category_ids__in']
-
-        # Add additional 'and' arguments to mongo query that do not require complex_query logic
-        for key in query.keys():
-            if key not in complex_query:
-                query_dict = {}
-                query_dict[key] = query[key]
-                query_build &= Q(**query_dict)
-
-        # Add additional arguments to mongo query that require more complex logic to construct
-        if 'annotated' in query.keys():
-
-            if 'category_ids__in' in query.keys() and query['annotated']:
-
-                # Only show annotated images with selected category_ids
-                query_dict = {}
-                query_dict['category_ids__in'] = query['category_ids__in']
-                query_build &= Q(**query_dict)
-
-            else:
-
-                # Only show non-annotated images
-                query_dict = {}
-                query_dict['annotated'] = query['annotated']
-                query_build &= Q(**query_dict)
-
-        elif 'category_ids__in' in query.keys():
-
-            # Ahow annotated images with selected category_ids or non-annotated images
-            query_dict_1 = {}
-            query_dict_1['category_ids__in'] = query['category_ids__in']
-
-            query_dict_2 = {}
-            query_dict_2['annotated'] = False
-            query_build &= (Q(**query_dict_1) | Q(**query_dict_2))
-
-        # Perform mongodb query
-        images = current_user.images \
-            .filter(query_build) \
-            .order_by(order).only('id', 'file_name', 'annotating', 'annotated', 'num_annotations')
-        
-        total = images.count()
-        pages = int(total/per_page) + 1
-        
-        images = images.skip(page*per_page).limit(per_page)
-        images_json = query_util.fix_ids(images)
-        # for image in images:
-        #     image_json = query_util.fix_ids(image)
-
-        #     query = AnnotationModel.objects(image_id=image.id, deleted=False)
-        #     category_ids = query.distinct('category_id')
-        #     categories = CategoryModel.objects(id__in=category_ids).only('name', 'color')
-
-        #     image_json['annotations'] = query.count()
-        #     image_json['categories'] = query_util.fix_ids(categories)
-
-        #     images_json.append(image_json)
+    return {"success": True}
 
 
-        subdirectories = [f for f in sorted(os.listdir(directory))
-                          if os.path.isdir(directory + f) and not f.startswith('.')]
-        
-        categories = CategoryModel.objects(id__in=dataset.categories).only('id', 'name')
+#@api.expect(page_data)
+#@login_required
+#@api.route('/data')
+@router.get("/dataset/data", responses=responses)
+async def get(self):
+    """ Endpoint called by dataset viewer client """
 
-        return {
-            "total": total,
-            "per_page": per_page,
-            "pages": pages,
-            "page": page,
-            "images": images_json,
-            "folder": folder,
-            "directory": directory,
-            "dataset": query_util.fix_ids(dataset),
-            "categories": query_util.fix_ids(categories),
-            "subdirectories": subdirectories
-        }
+    args = page_data.parse_args()
+    limit = args['limit']
+    page = args['page']
+    folder = args['folder']
 
+    datasets = current_user.datasets.filter(deleted=False)
+    pagination = Pagination(datasets.count(), limit, page)
+    datasets = datasets[pagination.start:pagination.end]
 
-@api.route('/<int:dataset_id>/exports')
-class DatasetExports(Resource):
+    datasets_json = []
+    for dataset in datasets:
+        dataset_json = query_util.fix_ids(dataset)
+        images = ImageModel.objects(dataset_id=dataset.id, deleted=False)
 
-    @login_required
-    async def get(self, dataset_id):
-        """ Returns exports of images and annotations in the dataset (only owners) """
-        dataset = current_user.datasets.filter(id=dataset_id).first()
+        dataset_json['numberImages'] = images.count()
+        dataset_json['numberAnnotated'] = images.filter(annotated=True).count()
+        dataset_json['permissions'] = dataset.permissions(current_user)
 
-        if dataset is None:
-            return {"message": "Invalid dataset ID"}, 400
-        
-        if not current_user.can_download(dataset):
-            return {"message": "You do not have permission to download the dataset's annotations"}, 403
-        
-        exports = ExportModel.objects(dataset_id=dataset.id).order_by('-created_at').limit(50)
+        first = images.first()
+        if first is not None:
+            dataset_json['first_image_id'] = images.first().id
+        datasets_json.append(dataset_json)
 
-        dict_export = []
-        for export in exports:
-
-            time_delta = datetime.datetime.utcnow() - export.created_at
-            dict_export.append({
-                'id': export.id,
-                'ago': query_util.td_format(time_delta),
-                'tags': export.tags
-            })
-
-        return dict_export
+    return {
+        "pagination": pagination.export(),
+        "folder": folder,
+        "datasets": datasets_json,
+        "categories": query_util.fix_ids(current_user.categories.filter(deleted=False).all())
+    }
 
 
-@api.route('/<int:dataset_id>/export')
-class DatasetExport(Resource):
+#@api.route('/<int:dataset_id>/data')
+#@profile
+#@api.expect(page_data)
+#@login_required
+@router.get("/dataset/{dataset_id}/data")
+async def get_dataset_data(dataset_id: int):
+    """ Endpoint called by image viewer client """
 
-    @api.expect(export)
-    @login_required
-    async def get(self, dataset_id):
+    parsed_args = page_data.parse_args()
+    per_page = parsed_args.get('limit')
+    page = parsed_args.get('page') - 1
+    folder = parsed_args.get('folder')
+    order = parsed_args.get('order')
 
-        args = export.parse_args()
-        categories = args.get('categories')
-        with_empty_images = args.get('with_empty_images', False)
-        
-        if len(categories) == 0:
-            categories = []
+    args = dict(request.args)
 
-        if len(categories) > 0 or isinstance(categories, str):
-            categories = [int(c) for c in categories.split(',')]
+    # Check if dataset exists
+    dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
+    if dataset is None:
+        return {'message', 'Invalid dataset id'}, 400
 
-        dataset = DatasetModel.objects(id=dataset_id).first()
-        
-        if not dataset:
-            return {'message': 'Invalid dataset ID'}, 400
-        
-        return dataset.export_coco(categories=categories, with_empty_images=with_empty_images)
-    
-    @api.expect(coco_upload)
-    @login_required
-    async def post(self, dataset_id):
-        """ Adds coco formatted annotations to the dataset """
-        args = coco_upload.parse_args()
-        coco = args['coco']
+    # Make sure folder starts with is in proper format
+    if len(folder) > 0:
+        folder = folder[0].strip('/') + folder[1:]
+        if folder[-1] != '/':
+            folder = folder + '/'
 
-        dataset = current_user.datasets.filter(id=dataset_id).first()
-        if dataset is None:
-            return {'message': 'Invalid dataset ID'}, 400
+    # Get directory
+    directory = os.path.join(dataset.directory, folder)
+    if not os.path.exists(directory):
+        return {'message': 'Directory does not exist.'}, 400
 
-        return dataset.import_coco(json.load(coco))
+    # Remove parsed arguments
+    for key in parsed_args:
+        args.pop(key, None)
+
+    # Generate query from remaining arugments
+    query = {}
+    for key, value in args.items():
+        lower = value.lower()
+        if lower in ["true", "false"]:
+            value = json.loads(lower)
+
+        if len(lower) != 0:
+            query[key] = value
+
+    # Change category_ids__in to list
+    if 'category_ids__in' in query.keys():
+        query['category_ids__in'] = [int(x) for x in query['category_ids__in'].split(',')]
+
+    # Initialize mongo query with required elements:
+    query_build = Q(dataset_id=dataset_id)
+    query_build &= Q(path__startswith=directory)
+    query_build &= Q(deleted=False)
+
+    # Define query names that should use complex logic:
+    complex_query = ['annotated', 'category_ids__in']
+
+    # Add additional 'and' arguments to mongo query that do not require complex_query logic
+    for key in query.keys():
+        if key not in complex_query:
+            query_dict = {}
+            query_dict[key] = query[key]
+            query_build &= Q(**query_dict)
+
+    # Add additional arguments to mongo query that require more complex logic to construct
+    if 'annotated' in query.keys():
+
+        if 'category_ids__in' in query.keys() and query['annotated']:
+
+            # Only show annotated images with selected category_ids
+            query_dict = {}
+            query_dict['category_ids__in'] = query['category_ids__in']
+            query_build &= Q(**query_dict)
+
+        else:
+
+            # Only show non-annotated images
+            query_dict = {}
+            query_dict['annotated'] = query['annotated']
+            query_build &= Q(**query_dict)
+
+    elif 'category_ids__in' in query.keys():
+
+        # Ahow annotated images with selected category_ids or non-annotated images
+        query_dict_1 = {}
+        query_dict_1['category_ids__in'] = query['category_ids__in']
+
+        query_dict_2 = {}
+        query_dict_2['annotated'] = False
+        query_build &= (Q(**query_dict_1) | Q(**query_dict_2))
+
+    # Perform mongodb query
+    images = current_user.images \
+        .filter(query_build) \
+        .order_by(order).only('id', 'file_name', 'annotating', 'annotated', 'num_annotations')
+
+    total = images.count()
+    pages = int(total/per_page) + 1
+
+    images = images.skip(page*per_page).limit(per_page)
+    images_json = query_util.fix_ids(images)
+    # for image in images:
+    #     image_json = query_util.fix_ids(image)
+
+    #     query = AnnotationModel.objects(image_id=image.id, deleted=False)
+    #     category_ids = query.distinct('category_id')
+    #     categories = CategoryModel.objects(id__in=category_ids).only('name', 'color')
+
+    #     image_json['annotations'] = query.count()
+    #     image_json['categories'] = query_util.fix_ids(categories)
+
+    #     images_json.append(image_json)
+
+    subdirectories = [f for f in sorted(os.listdir(directory))
+                      if os.path.isdir(directory + f) and not f.startswith('.')]
+
+    categories = CategoryModel.objects(id__in=dataset.categories).only('id', 'name')
+
+    return {
+        "total": total,
+        "per_page": per_page,
+        "pages": pages,
+        "page": page,
+        "images": images_json,
+        "folder": folder,
+        "directory": directory,
+        "dataset": query_util.fix_ids(dataset),
+        "categories": query_util.fix_ids(categories),
+        "subdirectories": subdirectories
+    }
+
+
+#@api.route('/<int:dataset_id>/exports')
+#@login_required
+@router.get("/dataset/{dataset_id}/exports")
+async def get_exports(dataset_id):
+    """ Returns exports of images and annotations in the dataset (only owners) """
+    dataset = current_user.datasets.filter(id=dataset_id).first()
+
+    if dataset is None:
+        return {"message": "Invalid dataset ID"}, 400
+
+    if not current_user.can_download(dataset):
+        return {"message": "You do not have permission to download the dataset's annotations"}, 403
+
+    exports = ExportModel.objects(dataset_id=dataset.id).order_by('-created_at').limit(50)
+
+    dict_export = []
+    for export in exports:
+
+        time_delta = datetime.datetime.utcnow() - export.created_at
+        dict_export.append({
+            'id': export.id,
+            'ago': query_util.td_format(time_delta),
+            'tags': export.tags
+        })
+
+    return dict_export
+
+
+#@api.route('/<int:dataset_id>/export')
+#@api.expect(export)
+#@login_required
+@router.get("/dataset/{dataset_id}/export", responses=responses)
+async def get(dataset_id):
+
+    args = export.parse_args()
+    categories = args.get('categories')
+    with_empty_images = args.get('with_empty_images', False)
+
+    if len(categories) == 0:
+        categories = []
+
+    if len(categories) > 0 or isinstance(categories, str):
+        categories = [int(c) for c in categories.split(',')]
+
+    dataset = DatasetModel.objects(id=dataset_id).first()
+
+    if not dataset:
+        return {'message': 'Invalid dataset ID'}, 400
+
+    return dataset.export_coco(categories=categories, with_empty_images=with_empty_images)
+
+
+#@api.expect(coco_upload)
+#@login_required
+@router.post("/dataset/{dataset_id}/coco", responses=responses)
+async def add_coco(dataset_id):
+    """ Adds coco formatted annotations to the dataset """
+    args = coco_upload.parse_args()
+    coco = args['coco']
+
+    dataset = current_user.datasets.filter(id=dataset_id).first()
+    if dataset is None:
+        return {'message': 'Invalid dataset ID'}, 400
+
+    return dataset.import_coco(json.load(coco))
 
 
 @api.route('/<int:dataset_id>/coco')

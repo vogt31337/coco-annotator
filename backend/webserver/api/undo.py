@@ -1,26 +1,25 @@
-from flask_restplus import Namespace, Resource, reqparse
-from flask_login import login_required
-
+# from flask_restplus import Namespace, Resource, reqparse
+# from flask_login import login_required
+#
 import os
 import shutil
 import datetime
-from database import (
+from backend.database import (
     ImageModel,
     DatasetModel,
     CategoryModel,
     AnnotationModel
 )
+#
+# api = Namespace('undo', description='Undo related operations')
 
-api = Namespace('undo', description='Undo related operations')
-
-model_list = reqparse.RequestParser()
-model_list.add_argument('type', type=str, location='args', default="all")
-model_list.add_argument('limit', type=int, location='args', default=50)
-
-model_data = reqparse.RequestParser()
-model_data.add_argument('id', type=int, required=True)
-model_data.add_argument('instance', required=True)
-
+# model_list = reqparse.RequestParser()
+# model_list.add_argument('type', type=str, location='args', default="all")
+# model_list.add_argument('limit', type=int, location='args', default=50)
+#
+# model_data = reqparse.RequestParser()
+# model_data.add_argument('id', type=int, required=True)
+# model_data.add_argument('instance', required=True)
 
 models = [
     (CategoryModel, "category"),
@@ -30,94 +29,114 @@ models = [
 ]
 
 
-@api.route('/list/')
-class Undo(Resource):
+from werkzeug.security import generate_password_hash
 
-    @api.expect(model_list)
-    @login_required
-    def get(self):
-        """ Returns all partially delete models """
-        args = model_list.parse_args()
-        model_type = args['type']
-        n = max(1, min(args['limit'], 1000))
+from backend.database import UserModel
+from backend.webserver.variables import responses, PageDataModel
 
-        data = []
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-        for model in models:
-            if model_type == "all" or model_type == model[1]:
-                data.extend(model_undo(model[0], model[1], limit=n))
+from ..util.query_util import fix_ids
 
-        data.sort(key=lambda item: item['date'], reverse=True)
-
-        for model in data:
-            model['date'] = str(model['date'])
-
-        if len(data) > n:
-            data = data[:n]
-
-        return data
+router = APIRouter()
 
 
-@api.route('/')
-class Undo(Resource):
+class ModelListModel(BaseModel):
+    type: str = 'all'
+    limit: int = 50
 
-    @api.expect(model_data)
-    @login_required
-    def post(self):
-        """ Undo a partial delete give id and instance """
-        args = model_data.parse_args()
-        model_id = args['id']
-        instance = args['instance']
 
-        model_instance = None
-        for model in models:
-            if model[1].lower() == instance:
-                model_instance = model[0]
+class ModelDataModel(BaseModel):
+    id: int
+    instance: str
 
-        if model_instance is None:
-            return {"message": "Instance not found"}, 400
 
-        model_object = model_instance.objects(id=model_id).first()
+#@api.route('/list/')
+#@api.expect(model_list)
+#@login_required
+@router.get('/undo/list')
+async def get_undo_list(model_list: ModelListModel):
+    """ Returns all partially delete models """
+    model_type = model_list.type
+    n = max(1, min(model_list.limit, 1000))
 
-        if model_object is None:
-            return {"message": "Invalid id"}, 400
+    data = []
 
-        model_object.update(set__deleted=False)
+    for model in models:
+        if model_type == "all" or model_type == model[1]:
+            data.extend(model_undo(model[0], model[1], limit=n))
 
-        return {"success": True}
+    data.sort(key=lambda item: item['date'], reverse=True)
 
-    @api.expect(model_data)
-    @login_required
-    def delete(self):
-        """ Undo a partial delete give id and instance """
-        args = model_data.parse_args()
-        model_id = args['id']
-        instance = args['instance']
+    for model in data:
+        model['date'] = str(model['date'])
 
-        model_instance = None
-        for model in models:
-            if model[1].lower() == instance:
-                model_instance = model[0]
+    if len(data) > n:
+        data = data[:n]
 
-        if model_instance is None:
-            return {"message": "Instance not found"}, 400
+    return data
 
-        model_object = model_instance.objects(id=model_id).first()
 
-        if model_object is None:
-            return {"message": "Invalid id"}, 400
+#@api.route('/')
+#@api.expect(model_data)
+#@login_required
+@router.post('/undo', responses=responses)
+async def post_undo(model_data: ModelDataModel):
+    """ Undo a partial delete give id and instance """
+    model_id = model_data.id
+    instance = model_data.instance
 
-        if isinstance(model_object, ImageModel):
-            if os.path.isfile(model_object.path):
-                os.remove(model_object.path)
+    model_instance = None
+    for model in models:
+        if model[1].lower() == instance:
+            model_instance = model[0]
 
-        if isinstance(model_object, DatasetModel):
-            if os.path.isdir(model_object.directory):
-                shutil.rmtree(model_object.directory)
+    if model_instance is None:
+        return {"message": "Instance not found"}, 400
 
-        model_object.delete()
+    model_object = model_instance.objects(id=model_id).first()
 
-        return {"success": True}
+    if model_object is None:
+        return {"message": "Invalid id"}, 400
+
+    model_object.update(set__deleted=False)
+
+    return {"success": True}
+
+
+#@api.expect(model_data)
+#@login_required
+@router.delete('/undo', responses=responses)
+async def delete_undo(model_data: ModelDataModel):
+    """ Undo a partial delete give id and instance """
+    model_id = model_data.id
+    instance = model_data.instance
+
+    model_instance = None
+    for model in models:
+        if model[1].lower() == instance:
+            model_instance = model[0]
+
+    if model_instance is None:
+        return {"message": "Instance not found"}, 400
+
+    model_object = model_instance.objects(id=model_id).first()
+
+    if model_object is None:
+        return {"message": "Invalid id"}, 400
+
+    if isinstance(model_object, ImageModel):
+        if os.path.isfile(model_object.path):
+            os.remove(model_object.path)
+
+    if isinstance(model_object, DatasetModel):
+        if os.path.isdir(model_object.directory):
+            shutil.rmtree(model_object.directory)
+
+    model_object.delete()
+
+    return {"success": True}
 
 
 def model_undo(model_instance, instance_name, limit=50):

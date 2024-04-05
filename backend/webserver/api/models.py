@@ -1,10 +1,20 @@
-from flask_restplus import Namespace, Resource, reqparse
-from werkzeug.datastructures import FileStorage
+# from flask_restplus import Namespace, Resource, reqparse
+# from werkzeug.datastructures import FileStorage
 from imantics import Mask
-from flask_login import login_required
-from config import Config
+# from flask_login import login_required
+import backend.config as Config
 from PIL import Image
-from database import ImageModel
+from backend.database import ImageModel
+
+from werkzeug.security import generate_password_hash
+
+from backend.database import UserModel
+from backend.webserver.variables import responses, PageDataModel
+
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+
+from ..util.query_util import fix_ids
 
 import os
 import logging
@@ -24,58 +34,61 @@ if DEXTR_LOADED:
 else:
     logger.warning("DEXTR model is disabled.")
 
-api = Namespace('model', description='Model related operations')
+# api = Namespace('model', description='Model related operations')
 
 
-image_upload = reqparse.RequestParser()
-image_upload.add_argument('image', location='files', type=FileStorage, required=True, help='Image')
+#image_upload = reqparse.RequestParser()
+#image_upload.add_argument('image', location='files', type=FileStorage, required=True, help='Image')
 
-dextr_args = reqparse.RequestParser()
-dextr_args.add_argument('points', location='json', type=list, required=True)
-dextr_args.add_argument('padding', location='json', type=int, default=50)
-dextr_args.add_argument('threshold', location='json', type=int, default=80)
+#dextr_args = reqparse.RequestParser()
+#dextr_args.add_argument('points', location='json', type=list, required=True)
+#dextr_args.add_argument('padding', location='json', type=int, default=50)
+#dextr_args.add_argument('threshold', location='json', type=int, default=80)
+
+router = APIRouter()
+
+class DextrModel(BaseModel):
+    points: str
+    padding: int = 50
+    threshold: int = 80
+
+#@api.route('/dextr/<int:image_id>')
+#@login_required
+#@api.expect(dextr_args)
+@router.post("/model/dextr/{image_id}")
+async def post_dextr(dextr: DextrModel, image_id: int):
+    """ COCO data test """
+
+    if not DEXTR_LOADED:
+        return {"disabled": True, "message": "DEXTR is disabled"}, 400
+
+    points = dextr.points
+    padding = dextr.padding
+    threshold = dextr.threshold
+
+    if len(points) != 4:
+        return {"message": "Invalid points entered"}, 400
+
+    image_model = ImageModel.objects(id=image_id).first()
+    if not image_model:
+        return {"message": "Invalid image ID"}, 400
+
+    image = Image.open(image_model.path)
+    result = dextr.predict_mask(image, points)
+
+    return { "segmentaiton": Mask(result).polygons().segmentation }
 
 
-@api.route('/dextr/<int:image_id>')
-class MaskRCNN(Resource):
+#@api.route('/maskrcnn')
+#@login_required
+#@api.expect(image_upload)
+@router.post('/model/maskrcnn')
+async def post_maskrcnn():
+    """ COCO data test """
+    if not MASKRCNN_LOADED:
+        return {"disabled": True, "coco": {}}
 
-    @login_required
-    @api.expect(dextr_args)
-    def post(self, image_id):
-        """ COCO data test """
-
-        if not DEXTR_LOADED:
-            return {"disabled": True, "message": "DEXTR is disabled"}, 400
-
-        args = dextr_args.parse_args()
-        points = args.get('points')
-        # padding = args.get('padding')
-        # threshold = args.get('threshold')
-
-        if len(points) != 4:
-            return {"message": "Invalid points entered"}, 400
-        
-        image_model = ImageModel.objects(id=image_id).first()
-        if not image_model:
-            return {"message": "Invalid image ID"}, 400
-        
-        image = Image.open(image_model.path)
-        result = dextr.predict_mask(image, points)
-
-        return { "segmentaiton": Mask(result).polygons().segmentation }
-
-
-@api.route('/maskrcnn')
-class MaskRCNN(Resource):
-
-    @login_required
-    @api.expect(image_upload)
-    def post(self):
-        """ COCO data test """
-        if not MASKRCNN_LOADED:
-            return {"disabled": True, "coco": {}}
-
-        args = image_upload.parse_args()
-        im = Image.open(args.get('image'))
-        coco = maskrcnn.detect(im)
-        return {"coco": coco}
+    args = image_upload.parse_args()
+    im = Image.open(args.get('image'))
+    coco = maskrcnn.detect(im)
+    return {"coco": coco}
