@@ -2,11 +2,10 @@
 #
 from backend.workers.tasks import long_task
 import backend.config as Config
-# from database import UserModel, TaskModel
 
 from werkzeug.security import generate_password_hash
 
-from backend.database import UserModel
+from backend.database import UserModel, TaskModel
 from backend.webserver.variables import responses, PageDataModel
 
 from fastapi import APIRouter, HTTPException

@@ -2,8 +2,8 @@ from werkzeug.security import generate_password_hash
 
 from backend.database import UserModel
 from backend.webserver.variables import responses, PageDataModel
-
-from fastapi import APIRouter, HTTPException
+from .users import SystemUser, get_current_user
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from ..util.query_util import fix_ids
@@ -28,22 +28,23 @@ from ..util.query_util import fix_ids
 router = APIRouter()
 
 
-@router.get('/admin/users', responses=responses)
-async def get_users(page_data: PageDataModel):
+@router.get('/admin/users', responses=responses, tags=["admin"])
+async def get_users(user: SystemUser = Depends(get_current_user)):
     """ Get list of all users """
 
-    if not current_user.is_admin:
+    if not user.is_admin:
         raise HTTPException(status_code=401, detail="Access denied")
         # return {"success": False, "message": "Access denied"}, 401
 
-    per_page = page_data.limit
-    page = page_data.page - 1
+    per_page = 100 # page_data.limit
+    page = 1 # page_data.page - 1
 
     user_model = UserModel.objects
     total = user_model.count()
     pages = int(total/per_page) + 1
 
-    user_model = user_model.skip(page*per_page).limit(per_page).exclude("preferences", "password")
+    # user_model = user_model.skip(page*per_page).limit(per_page).exclude("preferences", "password")
+    user_model = user_model.exclude("preferences", "password", "_id")
 
     return {
         "total": total,
@@ -62,11 +63,11 @@ class Register(BaseModel):
     isAdmin: bool = False
 
 
-@router.post('/admin/user', responses=responses)
-async def create_user(user: Register):
+@router.post('/admin/user', responses=responses, tags=["admin"])
+async def create_user(user: Register, sysuser: SystemUser = Depends(get_current_user)):
         """ Create a new user """
 
-        if not current_user.is_admin:
+        if not sysuser.is_admin:
             raise HTTPException(status_code=401, detail="Access denied")
             #return {"success": False, "message": "Access denied"}, 401
 
@@ -76,23 +77,24 @@ async def create_user(user: Register):
 
         usermodel = UserModel()
         usermodel.username = user.username
-        usermodel.password = generate_password_hash(user.password, method='sha256')
+        usermodel.password = generate_password_hash(user.password)
         usermodel.name = user.name
         usermodel.email = user.email
         usermodel.is_admin = user.isAdmin
         usermodel.save()
 
-        user_json = fix_ids(current_user)
-        del user_json['password']
+        # user_json = fix_ids(current_user)
+        # del user_json['password']
 
-        return {'success': True, 'user': user_json}
+        # return {'success': True, 'user': user_json}
+        return {'success': True}
 
 
-@router.get('/admin/user/{username}')
-async def get_user(username: str):
+@router.get('/admin/user/{username}', responses=responses, tags=["admin"])
+async def get_user(username: str, user: SystemUser = Depends(get_current_user)):
     """ Get a users """
 
-    if not current_user.is_admin:
+    if not user.is_admin:
         raise HTTPException(status_code=401, detail="Access denied")
         #return {"success": False, "message": "Access denied"}, 401
 
@@ -111,11 +113,11 @@ class UserData(BaseModel):
 
 #@api.expect(create_user)
 #@login_required
-@router.patch('/admin/user/{username}')
-async def update_user(username: str, user_data: UserData):
+@router.patch('/admin/user/{username}', responses=responses, tags=["admin"])
+async def update_user(username: str, user_data: UserData, user: SystemUser = Depends(get_current_user)):
     """ Edit a user """
 
-    if not current_user.is_admin:
+    if not user.is_admin:
         raise HTTPException(status_code=401, detail="Access denied")
         #return {"success": False, "message": "Access denied"}, 401
 
@@ -124,14 +126,13 @@ async def update_user(username: str, user_data: UserData):
         raise HTTPException(status_code=400, detail='User not found')
         #return {"success": False, "message": "User not found"}, 400
 
-    args = create_user.parse_args()
     name = user_data.name
     if len(name) > 0:
         user.name = name
 
     password = user_data.password
     if len(password) > 0:
-        user.password = generate_password_hash(password, method='sha256')
+        user.password = generate_password_hash(password)
 
     user.save()
 
@@ -139,11 +140,11 @@ async def update_user(username: str, user_data: UserData):
 
 
 #@login_required
-@router.delete('/admin/user/{username}')
-async def delete_user(username: str):
+@router.delete('/admin/user/{username}', responses=responses, tags=["admin"])
+async def delete_user(username: str, user: SystemUser = Depends(get_current_user)):
     """ Delete a user """
 
-    if not current_user.is_admin:
+    if not user.is_admin:
         raise HTTPException(status_code=401, detail="Access denied")
         #return {"success": False, "message": "Access denied"}, 401
 

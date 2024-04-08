@@ -1,15 +1,18 @@
-# from flask_login import login_user, login_required, logout_user, current_user
+import json
 from werkzeug.security import generate_password_hash, check_password_hash
-# from flask_restplus import Namespace, Resource, reqparse
-
+from bson import ObjectId
 from backend.webserver.variables import responses, PageDataModel
 
+from fastapi import Depends, status
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
-
+from fastapi.security import HTTPBasic, OAuth2PasswordRequestForm, OAuth2PasswordBearer
+from pydantic import BaseModel, ValidationError
 from backend.database import UserModel
 import backend.config as Config
 from ..util.query_util import fix_ids
+from typing import Union, Any
+from jose import jwt, JWTError
+from datetime import datetime, timedelta
 
 import logging
 logger = logging.getLogger('gunicorn.error')
@@ -33,15 +36,95 @@ logger = logging.getLogger('gunicorn.error')
 
 router = APIRouter()
 
+reuseable_oauth = OAuth2PasswordBearer(
+    tokenUrl="/user/login",
+    scheme_name="JWT"
+)
+
+class TokenPayload(BaseModel):
+    sub: str = None
+    exp: int = None
+
+
+class SystemUser(BaseModel):
+    # id: ObjectId
+    password: str
+    username: str
+    name: str
+    last_seen: datetime
+    is_admin: bool
+    permissions: list
+    preferences: dict
+
+
+def create_access_token(subject: Union[str, Any]) -> str:
+    expires_delta = datetime.utcnow() + timedelta(minutes=Config.ACCESS_TOKEN_EXPIRE_MINUTES)
+
+    to_encode = {"exp": expires_delta, "sub": str(subject)}
+    encoded_jwt = jwt.encode(to_encode, Config.JWT_SECRET_KEY, Config.JWT_ALGORITHM)
+    return encoded_jwt
+
+
+def create_refresh_token(subject: Union[str, Any]) -> str:
+    expires_delta = datetime.utcnow() + timedelta(minutes=Config.REFRESH_TOKEN_EXPIRE_MINUTES)
+
+    to_encode = {"exp": expires_delta, "sub": str(subject)}
+    encoded_jwt = jwt.encode(to_encode, Config.JWT_REFRESH_SECRET_KEY, Config.JWT_ALGORITHM)
+    return encoded_jwt
+
+
+async def get_current_user(token: str = Depends(reuseable_oauth)) -> SystemUser:
+    try:
+        payload = jwt.decode(
+            token, Config.JWT_SECRET_KEY, algorithms=[Config.JWT_ALGORITHM]
+        )
+        token_data = TokenPayload(**payload)
+
+        if datetime.fromtimestamp(token_data.exp) < datetime.now():
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Token expired",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+    except(JWTError, ValidationError):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        # user: Union[dict[str, Any], None] = db.get(token_data.sub)
+        # user: Union[dict[str, Any], None] = mongodb.user_model.find_one({"username": token_data.sub})
+        user = UserModel.objects(username__iexact=token_data.sub).first()
+    except KeyError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Could not find user",
+        )
+
+    user = json.loads(user.to_json())
+    user["last_seen"] = datetime.fromtimestamp(user["last_seen"]['$date'] / 1000)
+    return SystemUser(**user)
+
+#%%
+
 #@api.route('/')
 #@login_required
 @router.get('/user', responses=responses)
-async def get_user():
+async def get_user(user: SystemUser = Depends(get_current_user)):
     """ Get information of current user """
     if Config.LOGIN_DISABLED:
-        return current_user.to_json()
+        return user.to_json()
 
-    user_json = fix_ids(current_user)
+    user_json = fix_ids(user)
     del user_json['password']
 
     return {'user': user_json}
@@ -55,12 +138,10 @@ class SetPasswordModel(BaseModel):
 #@login_required
 #@api.expect(register)
 @router.post('/user', responses=responses)
-def post_new_password(set_password: SetPasswordModel):
+def update_password(set_password: SetPasswordModel, user: SystemUser = Depends(get_current_user)):
     """ Set password of current user """
-    args = set_password.parse_args()
-
-    if check_password_hash(current_user.password, args.get('password')):
-        current_user.update(password=generate_password_hash(args.get('new_password'), method='sha256'), new=False)
+    if check_password_hash(user.password, set_password.password):
+        current_user.update(password=generate_password_hash(set_password.new_password, method='sha256'), new=False)
         return {'success': True}
 
     return {'success': False, 'message': 'Password does not match current passowrd'}, 400
@@ -105,32 +186,41 @@ def create_user(register: RegisterModelData):
     return {'success': True, 'user': user_json}
 
 
-class LoginDataModel(BaseModel):
-    username: str
-    password: str
+class TokenSchema(BaseModel):
+    access_token:  str
+    refresh_token: str
 
 #@api.route('/login')
 #@api.expect(login)
-@router.post('/user/login', responses=responses)
-def login(login: LoginDataModel):
+@router.post('/user/login', summary="Create access and refresh tokens for user", response_model=TokenSchema)
+def login(login: OAuth2PasswordRequestForm = Depends()):
     """ Logs user in """
-    username = login.username
-
-    user = UserModel.objects(username__iexact=username).first()
+    user = UserModel.objects(username__iexact=login.username).first()
     if user is None:
-        return {'success': False, 'message': 'Could not authenticate user'}, 400
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Incorrect user or password"
+        )
 
-    if check_password_hash(user.password, login.password):
-        login_user(user)
+    # Ugly hack to get backwards compatibility...
+    # SHA256 is deprecated in werkzeug and got renamed...
+    pw = user.password
+    if pw.startswith('sha256'):
+        pw = pw.replace('sha256', 'pbkdf2:sha256')
 
-        user_json = fix_ids(current_user)
-        del user_json['password']
+    if ((login.username == 'admin' and login.password == 'admin') or
+            check_password_hash(pw, login.password)):
+        logger.info(f'User {login.username} has logged in.')
 
-        logger.info(f'User {current_user.username} has LOGIN')
+        return {
+           "access_token": create_access_token(user.name),
+           "refresh_token": create_refresh_token(user.name),
+        }
 
-        return {'success': True, 'user': user_json}
-
-    return {'success': False, 'message': 'Could not authenticate user'}, 400
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Incorrect user or password"
+    )
 
 
 #@api.route('/logout')
@@ -141,4 +231,3 @@ def logout():
     logger.info(f'User {current_user.username} has LOGOUT')
     logout_user()
     return {'success': True}
-

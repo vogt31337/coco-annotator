@@ -1,10 +1,11 @@
-from mongoengine import connect
+from pymongo import MongoClient
+from mongoengine import connect, disconnect_all
 import backend.config as Config
 
 from .annotations import *
 from .categories import *
 from .datasets import *
-from .lisence import *
+from .license import *
 from .exports import *
 from .images import *
 from .events import *
@@ -14,10 +15,9 @@ from .tasks import *
 import json
 
 
-def connect_mongo(name, host=None):
-    if host is None:
-        host = Config.MONGODB_HOST
-    connect(name, host=host)
+def connect_mongo(name) -> MongoClient:
+    disconnect_all()
+    return connect(name, host=Config.MONGODB_HOST)
 
 
 # https://github.com/MongoEngine/mongoengine/issues/1171

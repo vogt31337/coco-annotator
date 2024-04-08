@@ -7,7 +7,7 @@ from mongoengine import *
 from .datasets import DatasetModel
 from .categories import CategoryModel
 from .events import Event
-from flask_login import current_user
+# from flask_login import current_user
 
 
 class AnnotationModel(DynamicDocument):

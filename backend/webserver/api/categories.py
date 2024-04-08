@@ -4,11 +4,12 @@ from mongoengine.errors import NotUniqueError
 
 from ..util.pagination_util import Pagination
 from ..util import query_util
-from backend.database import CategoryModel, AnnotationModel
-from fastapi import APIRouter, HTTPException
+from backend.database import CategoryModel, AnnotationModel, UserModel
+from fastapi import APIRouter, HTTPException, Depends
 from backend.webserver.variables import responses, PageDataModel
 from pydantic import BaseModel
-
+from .users import SystemUser, get_current_user
+import json
 import datetime
 
 # api = Namespace('category', description='Category related operations')
@@ -38,12 +39,15 @@ import datetime
 router = APIRouter()
 
 #@login_required
-@router.get('/category', responses=responses)
-async def get_categories():
+@router.get('/category', responses=responses, tags=["category"])
+async def get_categories(user: SystemUser = Depends(get_current_user)):
     """ Returns all categories """
-    return query_util.fix_ids(current_user.categories.all())
+    userdb = UserModel.objects(username__iexact=user.username).first()
+    categories = list(userdb.categories.all())
+    return query_util.fix_ids(categories)
 
-class CategoryModel(BaseModel):
+
+class CreateCategoryModel(BaseModel):
     name: str
     supercategory: str | None = None
     color: str | None = None
@@ -54,8 +58,8 @@ class CategoryModel(BaseModel):
 
 #@api.expect(create_category)
 #@login_required
-@router.post('/category', responses=responses)
-async def create_category(create_category: CategoryModel):
+@router.post('/category', responses=responses, tags=["category"])
+async def create_category(create_category: CreateCategoryModel, user: SystemUser = Depends(get_current_user)):
     """ Creates a category """
 
     name = create_category.name
@@ -78,47 +82,51 @@ async def create_category(create_category: CategoryModel):
         )
         category.save()
     except NotUniqueError as e:
-        return {'message': 'Category already exists. Check the undo tab to fully delete the category.'}, 400
+        raise HTTPException(status_code=400, detail='Category already exists. Check the undo tab to fully delete the category.')
 
     return query_util.fix_ids(category)
 
 
 #@login_required
-@router.get('/category/{category_id}', responses=responses)
-async def get_category(category_id: int):
+@router.get('/category/{category_id}', responses=responses, tags=["category"])
+async def get_category(category_id: int, user: SystemUser = Depends(get_current_user)):
     """ Returns a category by ID """
-    category = current_user.categories.filter(id=category_id).first()
+    userdb = UserModel.objects(username__iexact=user.username).first()
+    category = userdb.categories.filter(id=category_id).first()
 
     if category is None:
-        return {'success': False}, 400
+        raise HTTPException(status_code=400, detail='Category does not exist.')
 
     return query_util.fix_ids(category)
 
+
 #@login_required
-@router.delete('/category/{category_id}', responses=responses)
-async def delete_category(category_id: int):
+@router.delete('/category/{category_id}', responses=responses, tags=["category"])
+async def delete_category(category_id: int, user: SystemUser = Depends(get_current_user)):
     """ Deletes a category by ID """
-    category = current_user.categories.filter(id=category_id).first()
+    userdb = UserModel.objects(username__iexact=user.username).first()
+    category = userdb.categories.filter(id=category_id).first()
     if category is None:
-        return {"message": "Invalid image id"}, 400
+        raise HTTPException(status_code=400, detail='Category does not exist.')
 
-    if not current_user.can_delete(category):
-        return {"message": "You do not have permission to delete this category"}, 403
+    if not user.can_delete(category):
+        raise HTTPException(status_code=403, detail="You do not have permission to delete this category")
 
-    category.update(set__deleted=True,
-                    set__deleted_date=datetime.datetime.now())
+    category.update(set__deleted=True, set__deleted_date=datetime.datetime.now())
     return {'success': True}
+
 
 #@api.expect(update_category)
 #@login_required
-@router.put('/category/{category_id}', responses=responses)
-async def update_category(update_category: CategoryModel, category_id: int):
+@router.put('/category/{category_id}', responses=responses, tags=["category"])
+async def update_category(update_category: CreateCategoryModel, category_id: int, user: SystemUser = Depends(get_current_user)):
     """ Updates a category name by ID """
-    category = current_user.categories.filter(id=category_id).first()
+    userdb = UserModel.objects(username__iexact=user.username).first()
+    category = userdb.categories.filter(id=category_id).first()
 
     # check if the id exits
     if category is None:
-        return {"message": "Invalid category id"}, 400
+        raise HTTPException(status_code=400, detail='Category does not exist.')
 
     name = update_category.name
     supercategory = update_category.supercategory
@@ -135,11 +143,11 @@ async def update_category(update_category: CategoryModel, category_id: int):
             and category.keypoint_edges == keypoint_edges \
             and category.keypoint_labels == keypoint_labels \
             and category.keypoint_colors == keypoint_colors:
-        return {"message": "Nothing to update"}, 200
+        return "Nothing to update"
 
     # check if the name is empty
     if not name:
-        return {"message": "Invalid category name to update"}, 400
+        raise HTTPException(status_code=400, detail="Invalid category name to update")
 
     # update name of the category
     # check if the name to update exits already in db
@@ -163,23 +171,24 @@ async def update_category(update_category: CategoryModel, category_id: int):
         )
     except NotUniqueError:
         # it is only triggered when the name already exists and the creator is the same
-        return {"message": "Category '" + category.name + "' already exits"}, 400
+        raise HTTPException(status_code=400, detail=f"Category {category.name} already exits")
 
     return {"success": True}
 
 
+# TODO: is this needed?
 #@login_required
-@router.get("/category/data")
-async def get_data(page_data: PageDataModel):
+@router.get("/category/{category_id}/data", responses=responses, tags=["category"])
+async def get_data(category_id: int, user: SystemUser = Depends(get_current_user)):
     """ Endpoint called by category viewer client """
-    limit = page_data.limit
-    page = page_data.page
+    limit = 100 # page_data.limit
+    page = 1 # page_data.page
 
-    categories = current_user.categories.filter(deleted=False)
+    userdb = UserModel.objects(username__iexact=user.username).first()
+    categories = userdb.categories.filter(deleted=False)
 
     pagination = Pagination(categories.count(), limit, page)
-    categories = query_util.fix_ids(
-        categories[pagination.start:pagination.end])
+    categories = query_util.fix_ids(categories[pagination.start:pagination.end])
 
     for category in categories:
         category['numberAnnotations'] = AnnotationModel.objects(

@@ -33,8 +33,8 @@ from werkzeug.security import generate_password_hash
 
 from backend.database import UserModel
 from backend.webserver.variables import responses, PageDataModel
-
-from fastapi import APIRouter, HTTPException
+from .users import get_current_user,SystemUser
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from ..util.query_util import fix_ids
@@ -56,7 +56,7 @@ class ModelDataModel(BaseModel):
 #@api.expect(model_list)
 #@login_required
 @router.get('/undo/list')
-async def get_undo_list(model_list: ModelListModel):
+async def get_undo_list(model_list: ModelListModel, user: SystemUser = Depends(get_current_user)):
     """ Returns all partially delete models """
     model_type = model_list.type
     n = max(1, min(model_list.limit, 1000))
@@ -82,7 +82,7 @@ async def get_undo_list(model_list: ModelListModel):
 #@api.expect(model_data)
 #@login_required
 @router.post('/undo', responses=responses)
-async def post_undo(model_data: ModelDataModel):
+async def post_undo(model_data: ModelDataModel, user: SystemUser = Depends(get_current_user)):
     """ Undo a partial delete give id and instance """
     model_id = model_data.id
     instance = model_data.instance
@@ -108,7 +108,7 @@ async def post_undo(model_data: ModelDataModel):
 #@api.expect(model_data)
 #@login_required
 @router.delete('/undo', responses=responses)
-async def delete_undo(model_data: ModelDataModel):
+async def delete_undo(model_data: ModelDataModel, user: SystemUser = Depends(get_current_user)):
     """ Undo a partial delete give id and instance """
     model_id = model_data.id
     instance = model_data.instance

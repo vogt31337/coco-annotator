@@ -1,6 +1,7 @@
 import os
 import subprocess
 import dotenv
+import random
 
 dotenv.load_dotenv()
 
@@ -45,7 +46,7 @@ DEBUG = os.getenv("DEBUG", 'false').lower() == 'true'
 PRELOAD = False
 
 MAX_CONTENT_LENGTH = os.getenv("MAX_CONTENT_LENGTH", 1 * 1024 * 1024 * 1024)  # 1GB
-MONGODB_HOST = os.getenv("MONGODB_HOST", "mongodb://database/flask")
+MONGODB_HOST = os.getenv("MONGODB_HOST", "mongodb://127.0.0.1:27018/flask")
 SECRET_KEY = os.getenv("SECRET_KEY", "<--- CHANGE THIS KEY --->")
 
 LOG_LEVEL = 'debug'
@@ -71,5 +72,16 @@ MASK_RCNN_CLASSES = os.getenv("MASK_RCNN_CLASSES", "BG")
 
 DEXTR_FILE = os.getenv("DEXTR_FILE", "/models/dextr_pascal-sbd.h5")
 
+### JWT Keys
+JWT_SECRET_KEY = os.getenv('JWT_SECRET', str(random.random()))
+JWT_ALGORITHM = os.getenv('JWT_ALGORITHM', 'HS256')
+JWT_REFRESH_SECRET_KEY = os.getenv('JWT_REFRESH_SECRET_KEY', str(random.random()))
+
+### Token lifetimes
+ACCESS_TOKEN_EXPIRE_MINUTES = 30  # 30 minutes
+REFRESH_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 days
+
+REST_IP = os.getenv("REST_IP", "0.0.0.0")
+REST_PORT = int(os.getenv("REST_PORT", 9123))
 
 # __all__ = ["Config"]

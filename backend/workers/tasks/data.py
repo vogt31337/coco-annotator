@@ -1,5 +1,5 @@
 
-from database import (
+from backend.database import (
     fix_ids,
     ImageModel,
     CategoryModel,

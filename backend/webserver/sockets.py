@@ -1,24 +1,26 @@
 import functools
 import time
 
-from flask import session
-from flask_socketio import (
-    SocketIO,
-    disconnect,
-    join_room,
-    leave_room,
-    emit
-)
-from flask_login import current_user
+# from flask import session
+# from flask_socketio import (
+#     SocketIO,
+#     disconnect,
+#     join_room,
+#     leave_room,
+#     emit
+# )
+# from flask_login import current_user
 
-from database import ImageModel, SessionEvent
-from config import Config
+from ..start import socket_manager as sm
+
+from backend.database import ImageModel, SessionEvent
+import backend.config as Config
 
 import logging
 logger = logging.getLogger('gunicorn.error')
 
 
-socketio = SocketIO()
+# socketio = SocketIO()
 
 
 def authenticated_only(f):
@@ -31,15 +33,17 @@ def authenticated_only(f):
     return wrapped
 
 
-@socketio.on('annotation')
-@authenticated_only
-def annotation(data):
-    emit('annotation', data, broadcast=True)
+#@socketio.on('annotation')
+#@authenticated_only
+@sm.on('annotation')
+async def annotation(data):
+    await sm.emit('annotation', data, broadcast=True)
 
 
-@socketio.on('annotating')
-@authenticated_only
-def annotating(data):
+#@socketio.on('annotating')
+#@authenticated_only
+@sm.on('annotating')
+async def annotating(data):
     """
     Socket for handling image locking and time logging
     """
@@ -52,7 +56,7 @@ def annotating(data):
         # invalid image ID
         return
     
-    emit('annotating', {
+    await sm.emit('annotating', {
         'image_id': image_id,
         'active': active,
         'username': current_user.username
@@ -61,14 +65,14 @@ def annotating(data):
     if active:
         logger.info(f'{current_user.username} has started annotating image {image_id}')
         # Remove user from pervious room
-        previous = session.get('annotating')
+        previous = sm.session.get('annotating')
         if previous is not None:
-            leave_room(previous)
+            sm.leave_room(previous)
             previous_image = ImageModel.objects(id=previous).first()
 
             if previous_image is not None:
 
-                start = session.get('annotating_time', time.time())
+                start = sm.session.get('annotating_time', time.time())
                 event = SessionEvent.create(start, current_user)
 
                 previous_image.add_event(event)
@@ -76,20 +80,20 @@ def annotating(data):
                     pull__annotating=current_user.username
                 )
 
-                emit('annotating', {
+                await sm.emit('annotating', {
                     'image_id': previous,
                     'active': False,
                     'username': current_user.username
                 }, broadcast=True, include_self=False)
 
-        join_room(image_id)
-        session['annotating'] = image_id
-        session['annotating_time'] = time.time()
+        sm.join_room(image_id)
+        sm.session['annotating'] = image_id
+        sm.session['annotating_time'] = time.time()
         image.update(add_to_set__annotating=current_user.username)
     else:
-        leave_room(image_id)
+        sm.leave_room(image_id)
 
-        start = session.get('annotating_time', time.time())
+        start = sm.session.get('annotating_time', time.time())
         event = SessionEvent.create(start, current_user)
 
         image.add_event(event)
@@ -97,33 +101,35 @@ def annotating(data):
             pull__annotating=current_user.username
         )
 
-        session['annotating'] = None
-        session['time'] = None
+        sm.session['annotating'] = None
+        sm.session['time'] = None
 
 
-@socketio.on('connect')
-def connect():
+#@socketio.on('connect')
+@sm.on('connect')
+async def connect(data):
     logger.info(f'Socket connection created with {current_user.username}')
 
 
-@socketio.on('disconnect')
-def disconnect():
+#@socketio.on('disconnect')
+@sm.on('disconnect')
+async def disconnect():
     if current_user.is_authenticated:
         logger.info(f'Socket connection has been disconnected with {current_user.username}')
-        image_id = session.get('annotating')
+        image_id = sm.session.get('annotating')
 
         # Remove user from room
         if image_id is not None:
             image = ImageModel.objects(id=image_id).first()
             if image is not None:
-                start = session.get('annotating_time', time.time())
+                start = sm.session.get('annotating_time', time.time())
                 event = SessionEvent.create(start, current_user)
         
                 image.add_event(event)
                 image.update(
                     pull__annotating=current_user.username
                 )
-                emit('annotating', {
+                await sm.emit('annotating', {
                     'image_id': image_id,
                     'active': False,
                     'username': current_user.username

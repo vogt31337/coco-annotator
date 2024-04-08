@@ -1,210 +1,215 @@
 import datetime
 
-from flask_restplus import Namespace, Resource
-from flask_login import login_required, current_user
-from flask import request
+from fastapi import APIRouter
+
+# from flask_restplus import Namespace, Resource
+# from flask_login import login_required, current_user
+# from flask import request
 
 from ..util import query_util, coco_util, profile, thumbnails
+from backend.webserver.variables import responses, PageDataModel
+from .users import SystemUser, get_current_user
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
 
-from config import Config
-from database import (
+import backend.config as Config
+from backend.database import (
     ImageModel,
     CategoryModel,
     AnnotationModel,
     SessionEvent
 )
 
-api = Namespace('annotator', description='Annotator related operations')
+# api = Namespace('annotator', description='Annotator related operations')
 
+router = APIRouter()
 
-@api.route('/data')
-class AnnotatorData(Resource):
+# @api.route('/data')
+# @profile
+# @login_required
+@router.post("/annotator/data", responses=responses, tags=["annotator"])
+def save_data(user: SystemUser = Depends(get_current_user)):
+    """
+    Called when saving data from the annotator client
+    """
+    data = request.get_json(force=True)
+    image = data.get('image')
+    dataset = data.get('dataset')
+    image_id = image.get('id')
 
-    @profile
-    @login_required
-    def post(self):
-        """
-        Called when saving data from the annotator client
-        """
-        data = request.get_json(force=True)
-        image = data.get('image')
-        dataset = data.get('dataset')
-        image_id = image.get('id')
-        
-        image_model = ImageModel.objects(id=image_id).first()
+    image_model = ImageModel.objects(id=image_id).first()
 
-        if image_model is None:
-            return {'success': False, 'message': 'Image does not exist'}, 400
+    if image_model is None:
+        return {'success': False, 'message': 'Image does not exist'}, 400
 
-        # Check if current user can access dataset
-        db_dataset = current_user.datasets.filter(id=image_model.dataset_id).first()
-        if dataset is None:
-            return {'success': False, 'message': 'Could not find associated dataset'}
-        
-        db_dataset.update(annotate_url=dataset.get('annotate_url', ''))
-        
-        categories = CategoryModel.objects.all()
-        annotations = AnnotationModel.objects(image_id=image_id)
+    # Check if current user can access dataset
+    db_dataset = user.datasets.filter(id=image_model.dataset_id).first()
+    if dataset is None:
+        return {'success': False, 'message': 'Could not find associated dataset'}
 
-        current_user.update(preferences=data.get('user', {}))
+    db_dataset.update(annotate_url=dataset.get('annotate_url', ''))
 
-        annotated = False
-        num_annotations = 0
-        # Iterate every category passed in the data
-        for category in data.get('categories', []):
-            category_id = category.get('id')
+    categories = CategoryModel.objects.all()
+    annotations = AnnotationModel.objects(image_id=image_id)
 
-            # Find corresponding category object in the database
-            db_category = categories.filter(id=category_id).first()
-            if db_category is None:
+    user.update(preferences=data.get('user', {}))
+
+    annotated = False
+    num_annotations = 0
+    # Iterate every category passed in the data
+    for category in data.get('categories', []):
+        category_id = category.get('id')
+
+        # Find corresponding category object in the database
+        db_category = categories.filter(id=category_id).first()
+        if db_category is None:
+            continue
+
+        category_update = {'color': category.get('color')}
+        if user.can_edit(db_category):
+            category_update['keypoint_edges'] = category.get('keypoint_edges', [])
+            category_update['keypoint_labels'] = category.get('keypoint_labels', [])
+            category_update['keypoint_colors'] = category.get('keypoint_colors', [])
+
+        db_category.update(**category_update)
+
+        # Iterate every annotation from the data annotations
+        for annotation in category.get('annotations', []):
+            counted = False
+            # Find corresponding annotation object in database
+            annotation_id = annotation.get('id')
+            db_annotation = annotations.filter(id=annotation_id).first()
+
+            if db_annotation is None:
                 continue
 
-            category_update = {'color': category.get('color')}
-            if current_user.can_edit(db_category):
-                category_update['keypoint_edges'] = category.get('keypoint_edges', [])
-                category_update['keypoint_labels'] = category.get('keypoint_labels', [])
-                category_update['keypoint_colors'] = category.get('keypoint_colors', [])
-            
-            db_category.update(**category_update)
+            # Paperjs objects are complex, so they will not always be passed. Therefor we update
+            # the annotation twice, checking if the paperjs exists.
 
-            # Iterate every annotation from the data annotations
-            for annotation in category.get('annotations', []):
-                counted = False
-                # Find corresponding annotation object in database
-                annotation_id = annotation.get('id')
-                db_annotation = annotations.filter(id=annotation_id).first()
+            # Update annotation in database
+            sessions = []
+            total_time = 0
+            for session in annotation.get('sessions', []):
+                date = datetime.datetime.fromtimestamp(int(session.get('start')) / 1e3)
+                model = SessionEvent(
+                    user=user.username,
+                    created_at=date,
+                    milliseconds=session.get('milliseconds'),
+                    tools_used=session.get('tools')
+                )
+                total_time += session.get('milliseconds')
+                sessions.append(model)
 
-                if db_annotation is None:
-                    continue
+            keypoints = annotation.get('keypoints', [])
+            if keypoints:
+                counted = True
 
-                # Paperjs objects are complex, so they will not always be passed. Therefor we update
-                # the annotation twice, checking if the paperjs exists.
+            db_annotation.update(
+                add_to_set__events=sessions,
+                inc__milliseconds=total_time,
+                set__isbbox=annotation.get('isbbox', False),
+                set__keypoints=keypoints,
+                set__metadata=annotation.get('metadata'),
+                set__color=annotation.get('color')
+            )
 
-                # Update annotation in database
-                sessions = []
-                total_time = 0
-                for session in annotation.get('sessions', []):
-                    date = datetime.datetime.fromtimestamp(int(session.get('start')) / 1e3)
-                    model = SessionEvent(
-                        user=current_user.username,
-                        created_at=date,
-                        milliseconds=session.get('milliseconds'),
-                        tools_used=session.get('tools')
-                    )
-                    total_time += session.get('milliseconds')
-                    sessions.append(model)
+            paperjs_object = annotation.get('compoundPath', [])
 
-                keypoints = annotation.get('keypoints', [])
-                if keypoints:
-                    counted = True
+            # Update paperjs if it exists
+            if len(paperjs_object) == 2:
+
+                width = db_annotation.width
+                height = db_annotation.height
+
+                # Generate coco formatted segmentation data
+                segmentation, area, bbox = coco_util.\
+                    paperjs_to_coco(width, height, paperjs_object)
 
                 db_annotation.update(
-                    add_to_set__events=sessions,
-                    inc__milliseconds=total_time,
+                    set__segmentation=segmentation,
+                    set__area=area,
                     set__isbbox=annotation.get('isbbox', False),
-                    set__keypoints=keypoints,
-                    set__metadata=annotation.get('metadata'),
-                    set__color=annotation.get('color')
+                    set__bbox=bbox,
+                    set__paper_object=paperjs_object,
                 )
 
-                paperjs_object = annotation.get('compoundPath', [])
+                if area > 0:
+                    counted = True
 
-                # Update paperjs if it exists
-                if len(paperjs_object) == 2:
+            if counted:
+                num_annotations += 1
 
-                    width = db_annotation.width
-                    height = db_annotation.height
+    image_model.update(
+        set__metadata=image.get('metadata', {}),
+        set__annotated=(num_annotations > 0),
+        set__category_ids=image.get('category_ids', []),
+        set__regenerate_thumbnail=True,
+        set__num_annotations=num_annotations
+    )
 
-                    # Generate coco formatted segmentation data
-                    segmentation, area, bbox = coco_util.\
-                        paperjs_to_coco(width, height, paperjs_object)
+    thumbnails.generate_thumbnail(image_model)
 
-                    db_annotation.update(
-                        set__segmentation=segmentation,
-                        set__area=area,
-                        set__isbbox=annotation.get('isbbox', False),
-                        set__bbox=bbox,
-                        set__paper_object=paperjs_object,
-                    )
-
-                    if area > 0:
-                        counted = True
-
-                if counted:
-                    num_annotations += 1
-
-        image_model.update(
-            set__metadata=image.get('metadata', {}),
-            set__annotated=(num_annotations > 0),
-            set__category_ids=image.get('category_ids', []),
-            set__regenerate_thumbnail=True,
-            set__num_annotations=num_annotations
-        )
-
-        thumbnails.generate_thumbnail(image_model)
-
-        return {"success": True}
+    return {"success": True}
 
 
-@api.route('/data/<int:image_id>')
-class AnnotatorId(Resource):
+#@api.route('/data/<int:image_id>')
+#@profile
+#@login_required
+@router.get("/annotator/data/{image_id}", responses=responses, tags=["annotator"])
+def get_annotatot_data(image_id: int, user: SystemUser = Depends(get_current_user)):
+    """ Called when loading from the annotator client """
+    image = ImageModel.objects(id=image_id)\
+        .exclude('events').first()
 
-    @profile
-    @login_required
-    def get(self, image_id):
-        """ Called when loading from the annotator client """
-        image = ImageModel.objects(id=image_id)\
-            .exclude('events').first()
+    if image is None:
+        return {'success': False, 'message': 'Could not load image'}, 400
 
-        if image is None:
-            return {'success': False, 'message': 'Could not load image'}, 400
+    dataset = user.datasets.filter(id=image.dataset_id).first()
+    if dataset is None:
+        return {'success': False, 'message': 'Could not find associated dataset'}, 400
 
-        dataset = current_user.datasets.filter(id=image.dataset_id).first()
-        if dataset is None:
-            return {'success': False, 'message': 'Could not find associated dataset'}, 400
+    categories = CategoryModel.objects(deleted=False)\
+        .in_bulk(dataset.categories).items()
 
-        categories = CategoryModel.objects(deleted=False)\
-            .in_bulk(dataset.categories).items()
+    # Get next and previous image
+    images = ImageModel.objects(dataset_id=dataset.id, deleted=False)
+    pre = images.filter(file_name__lt=image.file_name).order_by('-file_name').first()
+    nex = images.filter(file_name__gt=image.file_name).order_by('file_name').first()
 
-        # Get next and previous image
-        images = ImageModel.objects(dataset_id=dataset.id, deleted=False)
-        pre = images.filter(file_name__lt=image.file_name).order_by('-file_name').first()
-        nex = images.filter(file_name__gt=image.file_name).order_by('file_name').first()
+    preferences = {}
+    if not Config.LOGIN_DISABLED:
+        preferences = user.preferences
 
-        preferences = {}
-        if not Config.LOGIN_DISABLED:
-            preferences = current_user.preferences
-
-        # Generate data about the image to return to client
-        data = {
-            'image': query_util.fix_ids(image),
-            'categories': [],
-            'dataset': query_util.fix_ids(dataset),
-            'preferences': preferences,
-            'permissions': {
-                'dataset': dataset.permissions(current_user),
-                'image': image.permissions(current_user)
-            }
+    # Generate data about the image to return to client
+    data = {
+        'image': query_util.fix_ids(image),
+        'categories': [],
+        'dataset': query_util.fix_ids(dataset),
+        'preferences': preferences,
+        'permissions': {
+            'dataset': dataset.permissions(user),
+            'image': image.permissions(user)
         }
+    }
 
-        data['image']['previous'] = pre.id if pre else None
-        data['image']['next'] = nex.id if nex else None
+    data['image']['previous'] = pre.id if pre else None
+    data['image']['next'] = nex.id if nex else None
 
-        # Optimize query: query all annotation of specific image, and then categorize them according to the categories.
-        all_annotations = AnnotationModel.objects(image_id=image_id, deleted=False).exclude('events').all()
+    # Optimize query: query all annotation of specific image, and then categorize them according to the categories.
+    all_annotations = AnnotationModel.objects(image_id=image_id, deleted=False).exclude('events').all()
 
-        for category in categories:
-            category = query_util.fix_ids(category[1])
-            category_id = category.get('id')
-            
-            annotations = []
-            for annotation in all_annotations:
-                if annotation['category_id'] == category_id:
-                    annotations.append(query_util.fix_ids(annotation))
+    for category in categories:
+        category = query_util.fix_ids(category[1])
+        category_id = category.get('id')
 
-            category['show'] = True
-            category['visualize'] = False
-            category['annotations'] = [] if annotations is None else annotations
-            data.get('categories').append(category)
+        annotations = []
+        for annotation in all_annotations:
+            if annotation['category_id'] == category_id:
+                annotations.append(query_util.fix_ids(annotation))
 
-        return data
+        category['show'] = True
+        category['visualize'] = False
+        category['annotations'] = [] if annotations is None else annotations
+        data.get('categories').append(category)
+
+    return data

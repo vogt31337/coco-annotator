@@ -2,8 +2,13 @@ import json
 
 
 def fix_ids(objs):
-    objects_list = json.loads(objs.to_json().replace('\"_id\"', '\"id\"'))
-    return objects_list
+    #objects_list = json.loads(objs.to_json().replace('\"_id\"', '\"id\"'))
+    #return objects_list
+    if type(objs) is list:
+        objs = [json.loads(x.to_json()) for x in objs]
+    else:
+        objs = json.loads(objs.to_json())
+    return objs
 
 
 def td_format(td_object):

@@ -11,8 +11,8 @@ from werkzeug.security import generate_password_hash
 
 from backend.database import UserModel
 from backend.webserver.variables import responses, PageDataModel
-
-from fastapi import APIRouter, HTTPException
+from .users import SystemUser, get_current_user
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 
@@ -21,7 +21,7 @@ router = APIRouter()
 #@api.route('/')
 #@login_required
 @router.get("/tasks", responses=responses)
-async def get_tasks():
+async def get_tasks(user: SystemUser = Depends(get_current_user)):
     """ Returns all tasks """
     query = TaskModel.objects.only(
         'group', 'id', 'name', 'completed', 'progress', 'priority', 'creator', 'desciption', 'errors', 'warnings'
@@ -32,7 +32,7 @@ async def get_tasks():
 #@api.route('/<int:task_id>')
 #@login_required
 @router.delete('/tasks/{task_id}', responses=responses)
-async def delete(task_id: int):
+async def delete(task_id: int, user: SystemUser = Depends(get_current_user)):
     """ Deletes task """
     task = TaskModel.objects(id=task_id).first()
 
@@ -49,7 +49,7 @@ async def delete(task_id: int):
 #@api.route('/<int:task_id>/logs')
 #@login_required
 @router.get("/tasks/{task_id}/logs", responses=responses)
-async def get_logs(task_id: int):
+async def get_logs(task_id: int, user: SystemUser = Depends(get_current_user)):
     """ Deletes task """
     task = TaskModel.objects(id=task_id).first()
     if task is None:

@@ -4,8 +4,8 @@
 
 from backend.database import UserModel
 from backend.webserver.variables import responses, PageDataModel
-
-from fastapi import APIRouter, HTTPException
+from .users import SystemUser, get_current_user
+from fastapi import APIRouter, HTTPException, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -25,16 +25,18 @@ router = APIRouter()
 
 #@api.route('/<int:export_id>')
 #@login_required
-@router.get("/export/{export_id}")
-def get_export(export_id: int):
+@router.get("/export/{export_id}", responses=responses, tags=["exports"])
+def get_export(export_id: int, user: SystemUser = Depends(get_current_user)):
     """ Returns exports """
+    userdb = UserModel.objects(username__iexact=user.username).first()
+
     export = ExportModel.objects(id=export_id).first()
     if export is None:
-        return {"message": "Invalid export ID"}, 400
+        raise HTTPException(status_code=400, detail="Invalid export ID")
 
-    dataset = current_user.datasets.filter(id=export.dataset_id).first()
+    dataset = userdb.datasets.filter(id=export.dataset_id).first()
     if dataset is None:
-        return {"message": "Invalid dataset ID"}, 400
+        raise HTTPException(status_code=400, detail="Invalid dataset ID")
 
     time_delta = datetime.datetime.utcnow() - export.created_at
     d = fix_ids(export)
@@ -42,16 +44,18 @@ def get_export(export_id: int):
     return d
     
 #@login_required
-@router.delete("/export/{export_id}")
-def delete_export(export_id: int):
+@router.delete("/export/{export_id}", responses=responses, tags=["exports"])
+def delete_export(export_id: int, user: SystemUser = Depends(get_current_user)):
     """ Returns exports """
+    userdb = UserModel.objects(username__iexact=user.username).first()
+
     export = ExportModel.objects(id=export_id).first()
     if export is None:
-        return {"message": "Invalid export ID"}, 400
+        raise HTTPException(status_code=400, detail="Invalid export ID")
 
-    dataset = current_user.datasets.filter(id=export.dataset_id).first()
+    dataset = userdb.datasets.filter(id=export.dataset_id).first()
     if dataset is None:
-        return {"message": "Invalid dataset ID"}, 400
+        raise HTTPException(status_code=400, detail="Invalid dataset ID")
 
     export.delete()
     return {'success': True}
@@ -59,20 +63,20 @@ def delete_export(export_id: int):
 
 #@api.route('/<int:export_id>/download')
 #@login_required
-@router.get('/export/{export_id}/download')
-def download_export(export_id: int):
+@router.get('/export/{export_id}/download', responses=responses, tags=["exports"])
+def download_export(export_id: int, user: SystemUser = Depends(get_current_user)):
     """ Returns exports """
+    userdb = UserModel.objects(username__iexact=user.username).first()
 
     export = ExportModel.objects(id=export_id).first()
     if export is None:
-        return {"message": "Invalid export ID"}, 400
+        raise HTTPException(status_code=400, detail="Invalid export ID")
 
-    dataset = current_user.datasets.filter(id=export.dataset_id).first()
+    dataset = userdb.datasets.filter(id=export.dataset_id).first()
     if dataset is None:
-        return {"message": "Invalid dataset ID"}, 400
+        raise HTTPException(status_code=400, detail="Invalid dataset ID")
 
-    if not current_user.can_download(dataset):
-        return {"message": "You do not have permission to download the dataset's annotations"}, 403
+    if not userdb.can_download(dataset):
+        raise HTTPException(status_code=403, detail="You do not have permission to download the dataset's annotations")
 
     return FileResponse(export.path, filename=f"{dataset.name.encode('utf-8')}-{'-'.join(export.tags).encode('utf-8')}.json")
-

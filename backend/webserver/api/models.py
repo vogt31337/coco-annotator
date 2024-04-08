@@ -10,8 +10,8 @@ from werkzeug.security import generate_password_hash
 
 from backend.database import UserModel
 from backend.webserver.variables import responses, PageDataModel
-
-from fastapi import APIRouter, HTTPException
+from .users import SystemUser, get_current_user
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 from ..util.query_util import fix_ids
@@ -56,7 +56,7 @@ class DextrModel(BaseModel):
 #@login_required
 #@api.expect(dextr_args)
 @router.post("/model/dextr/{image_id}")
-async def post_dextr(dextr: DextrModel, image_id: int):
+async def post_dextr(dextr: DextrModel, image_id: int, user: SystemUser = Depends(get_current_user)):
     """ COCO data test """
 
     if not DEXTR_LOADED:
@@ -83,7 +83,7 @@ async def post_dextr(dextr: DextrModel, image_id: int):
 #@login_required
 #@api.expect(image_upload)
 @router.post('/model/maskrcnn')
-async def post_maskrcnn():
+async def post_maskrcnn(user: SystemUser = Depends(get_current_user)):
     """ COCO data test """
     if not MASKRCNN_LOADED:
         return {"disabled": True, "coco": {}}

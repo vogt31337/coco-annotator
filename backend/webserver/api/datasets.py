@@ -16,7 +16,9 @@ from backend.database import (
     DatasetModel,
     CategoryModel,
     AnnotationModel,
-    ExportModel
+    ExportModel,
+    UserModel,
+    # CocoImportModel
 )
 
 import datetime
@@ -24,8 +26,9 @@ import json
 import os
 
 from backend.webserver.variables import responses, PageDataModel
+from .users import SystemUser, get_current_user
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
 from pydantic import BaseModel
 
 # api = Namespace('dataset', description='Dataset related operations')
@@ -68,22 +71,34 @@ from pydantic import BaseModel
 
 router = APIRouter()
 
+def _get_dataset_from_db(dataset_id, user):
+    userdb = UserModel.objects(username__iexact=user.username).first()
+    dataset = userdb.datasets.filter(id=dataset_id).first()
+    if dataset is None:
+        raise HTTPException(status_code=400, detail="No datasets found.")
+    return dataset, userdb
+
+
 # @api.route('/dataset')
 # @login_required
-@router.get('/dataset', responses=responses)
-async def get_datasets():
+@router.get('/dataset', responses=responses, tags=["dataset"])
+async def get_datasets(user = Depends(get_current_user)):
     """ Returns all datasets """
-    return query_util.fix_ids(current_user.datasets.filter(deleted=False).all())
+    userdb = UserModel.objects(username__iexact=user.username).first()
+    datasets = list(userdb.datasets.filter(deleted=False).all())
+
+    return query_util.fix_ids(datasets)
 
 
 class CreateDatasetModel(BaseModel):
     name: str
     categories: list | None = None
 
+
 #@api.expect(dataset_create)
 #@login_required
-@router.post('/dataset', responses=responses)
-async def create_dataset(dataset_create: CreateDatasetModel):
+@router.post('/dataset', responses=responses, tags=["dataset"])
+async def create_dataset(dataset_create: CreateDatasetModel, user = Depends(get_current_user)):
     """ Creates a dataset """
     name = dataset_create.name
     categories = dataset_create.categories
@@ -136,24 +151,20 @@ async def create_dataset(dataset_create: CreateDatasetModel):
 #         return {"success": True}
 
 # @login_required
-@router.get('/dataset/{dataset_id}/users', responses=responses)
-async def get_dataset_users(dataset_id: int):
+@router.get('/dataset/{dataset_id}/users', responses=responses, tags=["dataset"])
+async def get_dataset_users(dataset_id: int, user = Depends(get_current_user)):
     """ All users in the dataset """
-    dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
-    if dataset is None:
-        return {"message": "Invalid dataset id"}, 400
+    dataset, _ = _get_dataset_from_db(dataset_id, user)
 
     users = dataset.get_users()
     return query_util.fix_ids(users)
 
 
 #    @login_required
-@router.get('/dataset/<int:dataset_id>/reset/metadata', responses=responses)
-async def get_dataset_metadata(dataset_id: int):
+@router.get('/dataset/{dataset_id}/reset/metadata', responses=responses, tags=["dataset"])
+async def get_dataset_metadata(dataset_id: int, user = Depends(get_current_user)):
     """ All users in the dataset """
-    dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
-    if dataset is None:
-        return {"message": "Invalid dataset id"}, 400
+    dataset, _ = _get_dataset_from_db(dataset_id, user)
 
     AnnotationModel.objects(dataset_id=dataset.id).update(metadata=dataset.default_annotation_metadata)
     ImageModel.objects(dataset_id=dataset.id).update(metadata={})
@@ -162,13 +173,10 @@ async def get_dataset_metadata(dataset_id: int):
 
 
 # @login_required
-@router.get('/dataset/{dataset_id}/stats', responses=responses)
-async def get_dataset_stats(dataset_id: int):
+@router.get('/dataset/{dataset_id}/stats', responses=responses, tags=["dataset"])
+async def get_dataset_stats(dataset_id: int, user = Depends(get_current_user)):
     """ All users in the dataset """
-
-    dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
-    if dataset is None:
-        return {"message": "Invalid dataset id"}, 400
+    dataset, _ = _get_dataset_from_db(dataset_id, user)
 
     images = ImageModel.objects(dataset_id=dataset.id, deleted=False)
     annotated_images = images.filter(annotated=True)
@@ -227,17 +235,13 @@ async def get_dataset_stats(dataset_id: int):
 
 
 #@login_required
-@router.delete('/dataset/{dataset_id}', responses=responses)
-async def delete_dataset(dataset_id: int):
+@router.delete('/dataset/{dataset_id}', responses=responses, tags=["dataset"])
+async def delete_dataset(dataset_id: int, user = Depends(get_current_user)):
     """ Deletes dataset by ID (only owners)"""
+    dataset, userdb = _get_dataset_from_db(dataset_id, user)
 
-    dataset = DatasetModel.objects(id=dataset_id, deleted=False).first()
-
-    if dataset is None:
-        return {"message": "Invalid dataset id"}, 400
-
-    if not current_user.can_delete(dataset):
-        return {"message": "You do not have permission to delete the dataset"}, 403
+    if not userdb.can_delete(dataset):
+        raise HTTPException(status_code=403, detail="You do not have permission to delete the dataset")
 
     dataset.update(set__deleted=True, set__deleted_date=datetime.datetime.now())
     return {"success": True}
@@ -245,14 +249,12 @@ async def delete_dataset(dataset_id: int):
 
 #@login_required
 #@api.expect(update_dataset)
-@router.post('/dataset/{dataset_id}', responses=responses)
-async def update_dataset(dataset_id: int):
+@router.post('/dataset/{dataset_id}', responses=responses, tags=["dataset"])
+async def update_dataset(dataset_id: int, user = Depends(get_current_user)):
     """ Updates dataset by ID """
+    dataset, _ = _get_dataset_from_db(dataset_id, user)
 
-    dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
-    if dataset is None:
-        return {"message": "Invalid dataset id"}, 400
-
+    # TODO! Update this part.
     args = update_dataset.parse_args()
     categories = args.get('categories')
     default_annotation_metadata = args.get('default_annotation_metadata')
@@ -285,17 +287,15 @@ async def update_dataset(dataset_id: int):
 #@api.expect(share)
 #@login_required
 #@api.route('/<int:dataset_id>/share')
-@router.post('/dataset/{dataset_id}/share', responses=responses)
-async def share_dataset(dataset_id):
+@router.post('/dataset/{dataset_id}/share', responses=responses, tags=["dataset"])
+async def share_dataset(dataset_id, user = Depends(get_current_user)):
+    dataset, userdb = _get_dataset_from_db(dataset_id, user)
+
+    if not dataset.is_owner(userdb):
+        raise HTTPException(status_code=403, detail="You do not have permission to share this dataset")
+
+    # TODO!
     args = share.parse_args()
-
-    dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
-    if dataset is None:
-        return {"message": "Invalid dataset id"}, 400
-
-    if not dataset.is_owner(current_user):
-        return {"message": "You do not have permission to share this dataset"}, 403
-
     dataset.update(users=args.get('users'))
 
     return {"success": True}
@@ -304,16 +304,20 @@ async def share_dataset(dataset_id):
 #@api.expect(page_data)
 #@login_required
 #@api.route('/data')
-@router.get("/dataset/data", responses=responses)
-async def get(self):
+@router.get("/dataset/data", responses=responses, tags=["dataset"])
+async def get(user = Depends(get_current_user)):
     """ Endpoint called by dataset viewer client """
+    userdb = UserModel.objects(username__iexact=user.username).first()
+    datasets = userdb.datasets.filter(deleted=False).all()
+    if datasets is None:
+        raise HTTPException(status_code=400, detail="No datasets found.")
 
     args = page_data.parse_args()
     limit = args['limit']
     page = args['page']
     folder = args['folder']
 
-    datasets = current_user.datasets.filter(deleted=False)
+    # datasets = current_user.datasets.filter(deleted=False)
     pagination = Pagination(datasets.count(), limit, page)
     datasets = datasets[pagination.start:pagination.end]
 
@@ -324,7 +328,7 @@ async def get(self):
 
         dataset_json['numberImages'] = images.count()
         dataset_json['numberAnnotated'] = images.filter(annotated=True).count()
-        dataset_json['permissions'] = dataset.permissions(current_user)
+        dataset_json['permissions'] = dataset.permissions(userdb)
 
         first = images.first()
         if first is not None:
@@ -335,7 +339,7 @@ async def get(self):
         "pagination": pagination.export(),
         "folder": folder,
         "datasets": datasets_json,
-        "categories": query_util.fix_ids(current_user.categories.filter(deleted=False).all())
+        "categories": query_util.fix_ids(userdb.categories.filter(deleted=False).all())
     }
 
 
@@ -343,10 +347,12 @@ async def get(self):
 #@profile
 #@api.expect(page_data)
 #@login_required
-@router.get("/dataset/{dataset_id}/data")
-async def get_dataset_data(dataset_id: int):
+@router.get("/dataset/{dataset_id}/data", responses=responses, tags=["dataset"])
+async def get_dataset_data(dataset_id: int, user = Depends(get_current_user)):
     """ Endpoint called by image viewer client """
+    dataset, userdb = _get_dataset_from_db(dataset_id, user)
 
+    # TODO!
     parsed_args = page_data.parse_args()
     per_page = parsed_args.get('limit')
     page = parsed_args.get('page') - 1
@@ -354,11 +360,6 @@ async def get_dataset_data(dataset_id: int):
     order = parsed_args.get('order')
 
     args = dict(request.args)
-
-    # Check if dataset exists
-    dataset = current_user.datasets.filter(id=dataset_id, deleted=False).first()
-    if dataset is None:
-        return {'message', 'Invalid dataset id'}, 400
 
     # Make sure folder starts with is in proper format
     if len(folder) > 0:
@@ -432,7 +433,7 @@ async def get_dataset_data(dataset_id: int):
         query_build &= (Q(**query_dict_1) | Q(**query_dict_2))
 
     # Perform mongodb query
-    images = current_user.images \
+    images = userdb.images \
         .filter(query_build) \
         .order_by(order).only('id', 'file_name', 'annotating', 'annotated', 'num_annotations')
 
@@ -474,16 +475,13 @@ async def get_dataset_data(dataset_id: int):
 
 #@api.route('/<int:dataset_id>/exports')
 #@login_required
-@router.get("/dataset/{dataset_id}/exports")
-async def get_exports(dataset_id):
+@router.get("/dataset/{dataset_id}/exports", responses=responses, tags=["dataset"])
+async def get_exports(dataset_id: int, user = Depends(get_current_user)):
     """ Returns exports of images and annotations in the dataset (only owners) """
-    dataset = current_user.datasets.filter(id=dataset_id).first()
+    dataset, userdb = _get_dataset_from_db(dataset_id, user)
 
-    if dataset is None:
-        return {"message": "Invalid dataset ID"}, 400
-
-    if not current_user.can_download(dataset):
-        return {"message": "You do not have permission to download the dataset's annotations"}, 403
+    if not userdb.can_download(dataset):
+        raise HTTPException(status_code=403, detail="You do not have permission to download the dataset's annotations")
 
     exports = ExportModel.objects(dataset_id=dataset.id).order_by('-created_at').limit(50)
 
@@ -503,9 +501,11 @@ async def get_exports(dataset_id):
 #@api.route('/<int:dataset_id>/export')
 #@api.expect(export)
 #@login_required
-@router.get("/dataset/{dataset_id}/export", responses=responses)
-async def get(dataset_id):
+@router.get("/dataset/{dataset_id}/export", responses=responses, tags=["dataset"])
+async def get(dataset_id: int, user = Depends(get_current_user)):
+    dataset, _ = _get_dataset_from_db(dataset_id, user)
 
+    #TODO!
     args = export.parse_args()
     categories = args.get('categories')
     with_empty_images = args.get('with_empty_images', False)
@@ -526,77 +526,67 @@ async def get(dataset_id):
 
 #@api.expect(coco_upload)
 #@login_required
-@router.post("/dataset/{dataset_id}/coco", responses=responses)
-async def add_coco(dataset_id):
+@router.post("/dataset/{dataset_id}/coco", responses=responses, tags=["dataset"])
+async def add_coco(dataset_id: int, user = Depends(get_current_user)):
     """ Adds coco formatted annotations to the dataset """
+    dataset, _ = _get_dataset_from_db(dataset_id, user)
+
     args = coco_upload.parse_args()
     coco = args['coco']
-
-    dataset = current_user.datasets.filter(id=dataset_id).first()
-    if dataset is None:
-        return {'message': 'Invalid dataset ID'}, 400
 
     return dataset.import_coco(json.load(coco))
 
 
-@api.route('/<int:dataset_id>/coco')
-class DatasetCoco(Resource):
+#@api.route('/<int:dataset_id>/coco')
+#@login_required
+@router.get("/dataset/{dataset_id}/coco", responses=responses, tags=["dataset"])
+async def get(dataset_id: int, user: SystemUser = Depends(get_current_user)):
+    """ Returns coco of images and annotations in the dataset (only owners) """
+    dataset, _ = _get_dataset_from_db(dataset_id, user)
 
-    @login_required
-    async def get(self, dataset_id):
-        """ Returns coco of images and annotations in the dataset (only owners) """
-        dataset = current_user.datasets.filter(id=dataset_id).first()
+    if not userdb.can_download(dataset):
+        raise HTTPException(status_code=403, detail="You do not have permission to download the dataset's annotations")
 
-        if dataset is None:
-            return {"message": "Invalid dataset ID"}, 400
-        
-        if not current_user.can_download(dataset):
-            return {"message": "You do not have permission to download the dataset's annotations"}, 403
+    return coco_util.get_dataset_coco(dataset)
 
-        return coco_util.get_dataset_coco(dataset)
+#@api.expect(coco_upload)
+#@login_required
+@router.post("/dataset/{dataset_id}/coco", responses=responses, tags=["dataset"])
+async def post(dataset_id: int, user: SystemUser = Depends(get_current_user)):
+    """ Adds coco formatted annotations to the dataset """
+    dataset, _ = _get_dataset_from_db(dataset_id, user)
 
-    @api.expect(coco_upload)
-    @login_required
-    async def post(self, dataset_id):
-        """ Adds coco formatted annotations to the dataset """
-        args = coco_upload.parse_args()
-        coco = args['coco']
+    # TODO!
+    args = coco_upload.parse_args()
+    coco = args['coco']
 
-        dataset = current_user.datasets.filter(id=dataset_id).first()
-        if dataset is None:
-            return {'message': 'Invalid dataset ID'}, 400
-
-        return dataset.import_coco(json.load(coco))
+    return dataset.import_coco(json.load(coco))
 
 
-@api.route('/coco/<int:import_id>')
-class DatasetCocoId(Resource):
+#@api.route('/coco/<int:import_id>')
+ #@login_required
+@router.get("/dataset/coco/{import_id}", responses=responses, tags=["dataset"])
+async def get(import_id: int, user: SystemUser = Depends(get_current_user)):
+    """ Returns current progress and errors of a coco import """
+    userdb = UserModel.objects(username__iexact=user.username).first()
+    coco_import = CocoImportModel.objects(id=import_id, creator=user.username).first()
 
-    @login_required
-    async def get(self, import_id):
-        """ Returns current progress and errors of a coco import """
-        coco_import = CocoImportModel.objects(
-            id=import_id, creator=current_user.username).first()
+    if not coco_import:
+        return {'message': 'No such coco import'}, 400
 
-        if not coco_import:
-            return {'message': 'No such coco import'}, 400
-
-        return {
-            "progress": coco_import.progress,
-            "errors": coco_import.errors
-        }
+    return {
+        "progress": coco_import.progress,
+        "errors": coco_import.errors
+    }
 
 
-@api.route('/<int:dataset_id>/scan')
-class DatasetScan(Resource):
-    
-    @login_required
-    async def get(self, dataset_id):
+#@api.route('/<int:dataset_id>/scan')
+#@login_required
+@router.get("/dataset/{dataset_id}/scan", responses=responses, tags=["dataset"])
+async def get(dataset_id: int, user: SystemUser = Depends(get_current_user)):
+    dataset, _ = _get_dataset_from_db(dataset_id, user)
 
-        dataset = DatasetModel.objects(id=dataset_id).first()
-        
-        if not dataset:
-            return {'message': 'Invalid dataset ID'}, 400
-        
-        return dataset.scan()
+    return dataset.scan()
+
+
 
