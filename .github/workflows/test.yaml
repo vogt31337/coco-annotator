@@ -1,0 +1,18 @@
+name: Test
+on:
+  push:
+    branches: [ master, develop ]
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Build container
+        run: docker compose -f docker-compose.dev.yml build
+      - name: Start container
+        run: docker compose -f docker-compose.dev.yml up
+      - name: Run backend api tests
+        run: docker run --network=cocoannotator schemathesis/schemathesis:stable run -w 1 -M GET --checks all http://webserver:5000/openapi.json
