@@ -13,6 +13,4 @@ jobs:
       - name: Build container
         run: docker compose -f docker-compose.dev.yml build
       - name: Start container
-        run: docker compose -f docker-compose.dev.yml up
-      - name: Run backend api tests
-        run: docker run --network=cocoannotator schemathesis/schemathesis:stable run -w 1 -M GET --checks all http://webserver:5000/openapi.json
+        run: docker compose -f docker-compose.dev.yml up && docker run --network=cocoannotator schemathesis/schemathesis:stable run -w 1 -M GET --checks all http://webserver:5000/openapi.json
