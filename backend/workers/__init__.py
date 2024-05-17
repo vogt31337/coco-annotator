@@ -1,6 +1,6 @@
 from celery import Celery
 import backend.config as Config
-from database import connect_mongo
+from backend.database import connect_mongo
 
 connect_mongo('Celery_Worker')
 

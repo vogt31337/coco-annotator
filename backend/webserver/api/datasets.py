@@ -305,16 +305,16 @@ async def share_dataset(dataset_id, user = Depends(get_current_user)):
 #@login_required
 #@api.route('/data')
 @router.get("/dataset/data", responses=responses, tags=["dataset"])
-async def get(user = Depends(get_current_user)):
+async def get(page: int, limit: int, user = Depends(get_current_user)):
     """ Endpoint called by dataset viewer client """
     userdb = UserModel.objects(username__iexact=user.username).first()
     datasets = userdb.datasets.filter(deleted=False).all()
     if datasets is None:
         raise HTTPException(status_code=400, detail="No datasets found.")
 
-    args = page_data.parse_args()
-    limit = args['limit']
-    page = args['page']
+    # args = page_data.parse_args()
+    # limit = args['limit']
+    # page = args['page']
     folder = args['folder']
 
     # datasets = current_user.datasets.filter(deleted=False)
@@ -348,14 +348,14 @@ async def get(user = Depends(get_current_user)):
 #@api.expect(page_data)
 #@login_required
 @router.get("/dataset/{dataset_id}/data", responses=responses, tags=["dataset"])
-async def get_dataset_data(dataset_id: int, user = Depends(get_current_user)):
+async def get_dataset_data(per_page: int, page: int, dataset_id: int, user = Depends(get_current_user)):
     """ Endpoint called by image viewer client """
     dataset, userdb = _get_dataset_from_db(dataset_id, user)
 
     # TODO!
-    parsed_args = page_data.parse_args()
-    per_page = parsed_args.get('limit')
-    page = parsed_args.get('page') - 1
+    #parsed_args = page_data.parse_args()
+    #per_page = parsed_args.get('limit')
+    #page = parsed_args.get('page') - 1
     folder = parsed_args.get('folder')
     order = parsed_args.get('order')
 

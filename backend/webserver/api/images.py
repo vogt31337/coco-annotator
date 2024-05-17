@@ -9,6 +9,7 @@ from backend.database import UserModel
 from backend.webserver.variables import responses, PageDataModel
 from .users import SystemUser, get_current_user
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from mongoengine.errors import NotUniqueError
@@ -54,18 +55,20 @@ import io
 
 router = APIRouter()
 
+
 #@api.route('/')
 #@api.expect(image_all)
 #@login_required
 @router.get("/images", responses=responses, tags=["images"])
-def get_images(user: SystemUser = Depends(get_current_user)):
+def get_images(per_page: int, page: int, user: SystemUser = Depends(get_current_user)):
     """ Returns all images """
-    args = image_all.parse_args()
-    per_page = args['per_page']
-    page = args['page']-1
+    userdb = UserModel.objects(username__iexact=user.username).first()
+    # args = image_all.parse_args()
+    # per_page = args['per_page']
+    # page = args['page']-1
     fields = args.get('fields', '')
 
-    images = current_user.images.filter(deleted=False)
+    images = userdb.images.filter(deleted=False)
     total = images.count()
     pages = int(total/per_page) + 1
 
@@ -82,11 +85,13 @@ def get_images(user: SystemUser = Depends(get_current_user)):
         "images": query_util.fix_ids(images.all())
     }
 
+
 #@api.expect(image_upload)
 #@login_required
 @router.post("/images", responses=responses, tags=["images"])
 def create_images(user: SystemUser = Depends(get_current_user)):
     """ Creates an image """
+    # TODO Reform this endpoint.
     args = image_upload.parse_args()
     image = args['image']
 
@@ -120,12 +125,13 @@ def create_images(user: SystemUser = Depends(get_current_user)):
 @router.get("/images/{image_id}", responses=responses, tags=["images"])
 def get_image(image_id: int, user: SystemUser = Depends(get_current_user)):
     """ Returns category by ID """
+    userdb = UserModel.objects(username__iexact=user.username).first()
     args = image_download.parse_args()
     as_attachment = args.get('asAttachment')
     thumbnail = args.get('thumbnail')
     as_original = args.get('asOriginal')
 
-    image = current_user.images.filter(id=image_id, deleted=False).first()
+    image = userdb.images.filter(id=image_id, deleted=False).first()
 
     if image is None:
         return {'success': False}, 400
@@ -142,7 +148,13 @@ def get_image(image_id: int, user: SystemUser = Depends(get_current_user)):
         with open(image.path, mode='rb') as f:
             image_io = io.BytesIO(f.read())
             image_io.seek(0)
-        return send_file(image_io, download_name=image.file_name, as_attachment=as_attachment)
+            res = image_io.getvalue()
+        # return SendFile(image_io, download_name=image.file_name, as_attachment=as_attachment)
+
+        async def result():
+            yield res
+
+        return StreamingResponse(result(), media_type='image/' + format)
 
     pil_image = image.open_thumbnail() if thumbnail else Image.open(image.path)
 
@@ -151,19 +163,25 @@ def get_image(image_id: int, user: SystemUser = Depends(get_current_user)):
     pil_image = pil_image.convert("RGB")
     pil_image.save(image_io, "JPEG", quality=90)
     image_io.seek(0)
+    res = image_io.getvalue()
 
-    return send_file(image_io, download_name=image.file_name, as_attachment=as_attachment)
+    async def result():
+        yield res
+
+    # return SendFile(image_io, download_name=image.file_name, as_attachment=as_attachment)
+    return StreamingResponse(result(), media_type='image/jpg')
 
 #@login_required
 @router.delete("/images/{image_id}", responses=responses, tags=["images"])
 def delete_image(image_id: int, user: SystemUser = Depends(get_current_user)):
     """ Deletes an image by ID """
-    image = current_user.images.filter(id=image_id, deleted=False).first()
+    userdb = UserModel.objects(username__iexact=user.username).first()
+    image = userdb.images.filter(id=image_id, deleted=False).first()
     if image is None:
-        return {"message": "Invalid image id"}, 400
+        raise HTTPException(status_code=400, detail="Invalid image id")
 
-    if not current_user.can_delete(image):
-        return {"message": "You do not have permission to download the image"}, 403
+    if not userdb.can_delete(image):
+        raise HTTPException(status_code=403, detail="You do not have permission to download the image")
 
     image.update(set__deleted=True, set__deleted_date=datetime.datetime.now())
     return {"success": True}
@@ -174,20 +192,21 @@ def delete_image(image_id: int, user: SystemUser = Depends(get_current_user)):
 #@login_required
 @router.post("/images/copy/{from_id}/{to_id}/annotations", responses=responses, tags=["images"])
 def post(from_id: int, to_id: int, user: SystemUser = Depends(get_current_user)):
+    userdb = UserModel.objects(username__iexact=user.username).first()
     args = copy_annotations.parse_args()
     category_ids = args.get('category_ids')
 
-    image_from = current_user.images.filter(id=from_id).first()
-    image_to = current_user.images.filter(id=to_id).first()
+    image_from = userdb.images.filter(id=from_id).first()
+    image_to = userdb.images.filter(id=to_id).first()
 
     if image_from is None or image_to is None:
-        return {'success': False, 'message': 'Invalid image ids'}, 400
+        raise HTTPException(status_code=400, detail="Invalid image id")
 
     if image_from == image_to:
-        return {'success': False, 'message': 'Cannot copy self'}, 400
+        raise HTTPException(status_code=400, detail='Cannot copy self')
 
     if image_from.width != image_to.width or image_from.height != image_to.height:
-        return {'success': False, 'message': 'Image sizes do not match'}, 400
+        raise HTTPException(status_code=400, detail='Image sizes do not match')
 
     if category_ids is None:
         category_ids = DatasetModel.objects(id=image_from.dataset_id).first().categories
@@ -206,13 +225,13 @@ def post(from_id: int, to_id: int, user: SystemUser = Depends(get_current_user))
 @router.get('/images/{image_id}', responses=responses, tags=["images"])
 def get(image_id: int, user: SystemUser = Depends(get_current_user)):
     """ Returns coco of image and annotations """
-    image = current_user.images.filter(id=image_id).exclude('deleted_date').first()
+    userdb = UserModel.objects(username__iexact=user.username).first()
+    image = userdb.images.filter(id=image_id).exclude('deleted_date').first()
 
     if image is None:
-        return {"message": "Invalid image ID"}, 400
+        raise HTTPException(status_code=400, detail="Invalid image ID")
 
-    if not current_user.can_download(image):
-        return {"message": "You do not have permission to download the images's annotations"}, 403
+    if not userdb.can_download(image):
+        raise HTTPException(status_code=403, detail="You do not have permission to download the images's annotations")
 
     return coco_util.get_image_coco(image_id)
-

@@ -1,0 +1,15 @@
+name: Test
+on:
+  push: { branches: master, develop }
+
+jobs:
+  test:
+    name: Run tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Build container
+        run: docker compose -f docker-compose.build.yml build
+      - name: Run backend tests
+        run: docker compose -f docker-compose.build.yml run backend

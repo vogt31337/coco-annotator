@@ -3,13 +3,15 @@ import Vuex from "vuex";
 
 import user from "./user";
 import info from "./info";
+import { auth } from "./auth.module";
 
 Vue.use(Vuex);
 
 export default new Vuex.Store({
   modules: {
     user,
-    info
+    info,
+    auth
   },
   state: {
     process: [],

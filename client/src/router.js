@@ -1,5 +1,6 @@
 import Vue from "vue";
-import Router from "vue-router";
+//import Router from "vue-router";
+import { createWebHistory, createRouter } from 'vue-router'
 
 // import Home from "@/views/Home";
 import About from "@/views/About";
@@ -16,9 +17,9 @@ import PageNotFound from "@/views/PageNotFound";
 
 Vue.use(Router);
 
-export default new Router({
+//export default new Router({
   // mode: "history",
-  routes: [
+const routes = [
     {
       path: "/about",
       name: "about",
@@ -74,5 +75,26 @@ export default new Router({
       component: Tasks
     },
     { path: "*", component: PageNotFound }
-  ]
+  ];
+//});
+
+const router = createRouter({
+  history: createWebHistory(),
+  routes
 });
+
+router.beforeEach((to, from, next) => {
+  const publicPages = ['/login', '/register'];
+  const authRequired = !publicPages.includes(to.path);
+  const loggedIn = localStorage.getItem('user');
+
+  // trying to access a restricted page + not logged in
+  // redirect to login page
+  if (authRequired && !loggedIn) {
+    next('/login');
+  } else {
+    next();
+  }
+});
+
+export default router;

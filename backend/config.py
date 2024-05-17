@@ -5,6 +5,7 @@ import random
 
 dotenv.load_dotenv()
 
+
 def get_tag():
     result = subprocess.run(["git", "describe", "--abbrev=0", "--tags"], stdout=subprocess.PIPE)
     return str(result.stdout.decode("utf-8")).strip()
