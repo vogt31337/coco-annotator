@@ -11,6 +11,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
       - name: Build container
-        run: docker compose -f docker-compose.dev.yml build
-      - name: Start container
-        run: docker compose -f docker-compose.dev.yml up && docker run --network=cocoannotator schemathesis/schemathesis:stable run -w 1 -M GET --checks all http://webserver:5000/openapi.json
+        run: docker compose -f docker-compose.backend.yml build
+      - name: Run backend api tests
+        run: docker compose -f docker-compose.backend.yml run test
