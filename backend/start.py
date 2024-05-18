@@ -67,4 +67,4 @@ if __name__ == "__main__":
     import uvicorn
 
     logger.info('Starting webserver.')
-    uvicorn.run(app, host=Config.REST_IP, port=int(Config.REST_PORT))
+    uvicorn.run("start:app", host=Config.REST_IP, port=int(Config.REST_PORT), workers=1)
