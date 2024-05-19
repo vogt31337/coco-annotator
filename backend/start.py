@@ -15,7 +15,6 @@ from backend.webserver.api import (
     datasets,
     exports,
     images,
-    info,
     models,
     tasks,
     undo,
@@ -42,7 +41,6 @@ app.include_router(categories.router)
 app.include_router(datasets.router)
 app.include_router(exports.router)
 app.include_router(images.router)
-app.include_router(info.router)
 app.include_router(models.router)
 app.include_router(tasks.router)
 app.include_router(undo.router)

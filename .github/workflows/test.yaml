@@ -13,4 +13,4 @@ jobs:
       - name: Build container
         run: docker compose -f docker-compose.backend.yml build
       - name: Run backend api tests
-        run: docker compose -f docker-compose.backend.yml run test
+        run: docker compose -f docker-compose.backend.yml run --service-ports test

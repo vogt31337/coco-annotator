@@ -74,6 +74,11 @@ def create_refresh_token(subject: Union[str, Any]) -> str:
 
 
 async def get_current_user(token: str = Depends(reuseable_oauth)) -> SystemUser:
+    if Config.LOGIN_DISABLED:
+        user = UserModel.objects(username__iexact="admin").first()
+        user = json.loads(user.to_json())
+        return SystemUser(**user)
+
     try:
         payload = jwt.decode(
             token, Config.JWT_SECRET_KEY, algorithms=[Config.JWT_ALGORITHM]
@@ -121,9 +126,6 @@ async def get_current_user(token: str = Depends(reuseable_oauth)) -> SystemUser:
 @router.get('/user', responses=responses)
 async def get_user(user: SystemUser = Depends(get_current_user)):
     """ Get information of current user """
-    if Config.LOGIN_DISABLED:
-        return user.to_json()
-
     user_json = fix_ids(user)
     del user_json['password']
 
@@ -225,9 +227,9 @@ def login(login: OAuth2PasswordRequestForm = Depends()):
 
 #@api.route('/logout')
 #@login_required
-@router.get('/users/logout', responses=responses)
-def logout():
+@router.get('/user/logout', responses=responses)
+def logout(login: OAuth2PasswordRequestForm = Depends()):
     """ Logs user out """
-    logger.info(f'User {current_user.username} has LOGOUT')
-    logout_user()
+    logger.info(f'User {login.username} has LOGOUT')
+    logout_user(login.username)
     return {'success': True}

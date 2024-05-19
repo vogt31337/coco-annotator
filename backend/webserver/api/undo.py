@@ -55,7 +55,7 @@ class ModelDataModel(BaseModel):
 #@api.route('/list/')
 #@api.expect(model_list)
 #@login_required
-@router.get('/undo/list')
+@router.get('/undo/list', responses=responses)
 async def get_undo_list(model_list: ModelListModel, user: SystemUser = Depends(get_current_user)):
     """ Returns all partially delete models """
     model_type = model_list.type

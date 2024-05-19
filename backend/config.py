@@ -6,9 +6,9 @@ import random
 dotenv.load_dotenv()
 
 
-def get_tag():
-    result = subprocess.run(["git", "describe", "--abbrev=0", "--tags"], stdout=subprocess.PIPE)
-    return str(result.stdout.decode("utf-8")).strip()
+#def get_tag():
+#    result = subprocess.run(["git", "describe", "--abbrev=0", "--tags"], stdout=subprocess.PIPE)
+#    return str(result.stdout.decode("utf-8")).strip()
 
 
 def _get_bool(key, default_value):
@@ -21,7 +21,7 @@ def _get_bool(key, default_value):
 
 
 NAME = os.getenv("NAME", "COCO Annotator")
-VERSION = get_tag()
+#VERSION = get_tag()
 
 ### File Watcher
 FILE_WATCHER = os.getenv("FILE_WATCHER", False)
