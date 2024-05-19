@@ -1,12 +1,16 @@
-from config import Config as AnnotatorConfig
+import backend.config as AnnotatorConfig
 from skimage.transform import resize
 import imantics as im
 
-from keras.preprocessing.image import img_to_array
-from mrcnn.config import Config
-import mrcnn.model as modellib
 import logging
 logger = logging.getLogger('gunicorn.error')
+
+try:
+    from keras.preprocessing.image import img_to_array
+    from mrcnn.config import Config
+    import mrcnn.model as modellib
+except ImportError:
+    logger.warning("RCNN model not found.")
 
 
 MODEL_DIR = "/workspace/models"

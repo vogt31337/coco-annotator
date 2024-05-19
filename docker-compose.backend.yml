@@ -12,7 +12,7 @@ services:
     container_name: schemathesis
     networks:
       - cocoannotator
-    command: run -w 1 -M GET --checks all http://webserver:5000/openapi.json
+    command: run -w 1 -M GET --checks all http://webserver:5000/openapi.json --wait-for-schema=30 --experimental=openapi-3.1
     depends_on:
       - webserver
 
@@ -35,6 +35,7 @@ services:
       - FLASK_APP=webserver
       - FLASK_ENV=development
       - DEBUG=true
+      - REST_PORT=5000
     networks:
       - cocoannotator
     depends_on:
@@ -62,7 +63,7 @@ services:
       - cocoannotator
 
   database:
-    image: mongo:4.0
+    image: mongo:5.0-rc
     container_name: annotator_mongodb
     environment:
       - MONGO_DATA_DIR=/data/db

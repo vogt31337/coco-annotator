@@ -1,6 +1,6 @@
 
 from celery import shared_task
-from database import TaskModel
+from backend.database import TaskModel
 
 from ..socket import create_socket
 

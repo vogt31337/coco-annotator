@@ -3,7 +3,7 @@ import numpy as np
 import shapely
 from shapely.geometry import LineString, Point
 
-from database import (
+from backend.database import (
     fix_ids,
     ImageModel,
     DatasetModel,

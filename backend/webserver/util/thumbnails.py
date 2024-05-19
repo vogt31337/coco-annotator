@@ -1,4 +1,4 @@
-from database import ImageModel
+from backend.database import ImageModel
 
 
 def generate_thumbnails():
@@ -8,5 +8,5 @@ def generate_thumbnails():
 
 
 def generate_thumbnail(image):
-    from workers.tasks import thumbnail_generate_single_image
+    from backend.workers.tasks import thumbnail_generate_single_image
     thumbnail_generate_single_image.delay(image.id)

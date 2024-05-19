@@ -21,17 +21,19 @@ import logging
 
 logger = logging.getLogger('gunicorn.error')
 
-
-MASKRCNN_LOADED = os.path.isfile(Config.MASK_RCNN_FILE)
-if MASKRCNN_LOADED:
-    from ..util.mask_rcnn import model as maskrcnn
-else:
+try:
+    MASKRCNN_LOADED = os.path.isfile(Config.MASK_RCNN_FILE)
+    if MASKRCNN_LOADED:
+        from ..util.mask_rcnn import model as maskrcnn
+    else:
+        logger.warning("MaskRCNN model is disabled.")
+except ImportError:
     logger.warning("MaskRCNN model is disabled.")
 
 DEXTR_LOADED = os.path.isfile(Config.DEXTR_FILE)
-if DEXTR_LOADED:
+try:
     from ..util.dextr import model as dextr
-else:
+except ImportError:
     logger.warning("DEXTR model is disabled.")
 
 # api = Namespace('model', description='Model related operations')

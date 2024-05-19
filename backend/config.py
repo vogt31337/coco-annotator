@@ -83,6 +83,6 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30  # 30 minutes
 REFRESH_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7 # 7 days
 
 REST_IP = os.getenv("REST_IP", "0.0.0.0")
-REST_PORT = int(os.getenv("REST_PORT", 9123))
+REST_PORT = int(os.getenv("REST_PORT", 5000))
 
 # __all__ = ["Config"]
